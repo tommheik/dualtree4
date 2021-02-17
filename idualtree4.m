@@ -14,7 +14,7 @@ function rec = idualtree4(A, D, varargin)
 %
 %   Tommi Heikkilä
 %   Created 15.5.2020
-%   Last edited 25.1.2021
+%   Last edited 17.2.2021
 
 % A should be a 4-D matrix output from dualtree3
 validateattributes(A,{'numeric'},{'real','nonempty','finite','ndims',4},...
@@ -38,6 +38,14 @@ else
     orgSize = varargin{1};
 end
 
+% Check for 'adjoint' or "adjoint"
+validopts = ["adjoint","inverse"];
+defaultopt = "inverse";
+global useAdj % Simpler to pass to other functions this way
+[useAdj, ~] = ...
+    wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
+useAdj = strcmpi(useAdj,"adjoint"); % Use a simple boolean value
+
 % Default filters
 params.Fsf = "nearsym5_7";
 params.sf = 10;
@@ -47,6 +55,14 @@ params.sf = deblank(['qshift' num2str(params.sf)]);
 load(char(params.Fsf));
 % Get the q-shift filter
 load(char(params.sf));
+
+if useAdj % Use adjoint in place of inverse
+    % Biorthogonal reconstruction filters need to be replaced with
+    % time-reversed decomposition filters. Since these filters are
+    % symmetric, time reversal in not needed.
+    LoR = LoD; 
+    HiR = HiD;
+end
 
 % Switch to single if needed
 if ~useDouble
@@ -190,27 +206,33 @@ y = zeros(2*sz(1:4));
 % cancel out.
 
 % Combine real parts
-y(2:2:end,2:2:end,2:2:end,2:2:end) = +O1r+O2r+O3r+O4r+O5r+O6r+O7r+O8r;
-y(2:2:end,2:2:end,1:2:end,1:2:end) = -O1r-O2r-O3r-O4r+O5r+O6r+O7r+O8r;
-y(2:2:end,1:2:end,2:2:end,1:2:end) = -O1r-O2r+O3r+O4r-O5r-O6r+O7r+O8r;
-y(2:2:end,1:2:end,1:2:end,2:2:end) = -O1r-O2r+O3r+O4r+O5r+O6r-O7r-O8r;
-y(1:2:end,2:2:end,2:2:end,1:2:end) = -O1r+O2r-O3r+O4r-O5r+O6r-O7r+O8r;
-y(1:2:end,2:2:end,1:2:end,2:2:end) = -O1r+O2r-O3r+O4r+O5r-O6r+O7r-O8r;
-y(1:2:end,1:2:end,2:2:end,2:2:end) = -O1r+O2r+O3r-O4r-O5r+O6r+O7r-O8r;
-y(1:2:end,1:2:end,1:2:end,1:2:end) = +O1r-O2r-O3r+O4r-O5r+O6r+O7r-O8r;
+y(2:2:end,2:2:end,2:2:end,2:2:end) = +O1r+O2r+O3r+O4r+O5r+O6r+O7r+O8r; % Paaaa
+y(2:2:end,2:2:end,1:2:end,1:2:end) = -O1r-O2r-O3r-O4r+O5r+O6r+O7r+O8r; % Paabb
+y(2:2:end,1:2:end,2:2:end,1:2:end) = -O1r-O2r+O3r+O4r-O5r-O6r+O7r+O8r; % Pabab
+y(2:2:end,1:2:end,1:2:end,2:2:end) = -O1r-O2r+O3r+O4r+O5r+O6r-O7r-O8r; % Pabba
+y(1:2:end,2:2:end,2:2:end,1:2:end) = -O1r+O2r-O3r+O4r-O5r+O6r-O7r+O8r; % Pbaab
+y(1:2:end,2:2:end,1:2:end,2:2:end) = -O1r+O2r-O3r+O4r+O5r-O6r+O7r-O8r; % Pbaba
+y(1:2:end,1:2:end,2:2:end,2:2:end) = -O1r+O2r+O3r-O4r-O5r+O6r+O7r-O8r; % Pbbaa
+y(1:2:end,1:2:end,1:2:end,1:2:end) = +O1r-O2r-O3r+O4r-O5r+O6r+O7r-O8r; % Pbbbb
 
 % Combine imaginary parts
-y(2:2:end,2:2:end,2:2:end,1:2:end) = +O1i+O2i+O3i+O4i+O5i+O6i+O7i+O8i;
-y(2:2:end,2:2:end,1:2:end,2:2:end) = +O1i+O2i+O3i+O4i-O5i-O6i-O7i-O8i;
-y(2:2:end,1:2:end,2:2:end,2:2:end) = +O1i+O2i-O3i-O4i+O5i+O6i-O7i-O8i;
-y(2:2:end,1:2:end,1:2:end,1:2:end) = -O1i-O2i+O3i+O4i+O5i+O6i-O7i-O8i;
-y(1:2:end,2:2:end,2:2:end,2:2:end) = +O1i-O2i+O3i-O4i+O5i-O6i+O7i-O8i;
-y(1:2:end,2:2:end,1:2:end,1:2:end) = -O1i+O2i-O3i+O4i+O5i-O6i+O7i-O8i;
-y(1:2:end,1:2:end,2:2:end,1:2:end) = -O1i+O2i+O3i-O4i-O5i+O6i+O7i-O8i;
-y(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i;
+y(2:2:end,2:2:end,2:2:end,1:2:end) = +O1i+O2i+O3i+O4i+O5i+O6i+O7i+O8i; % Paaab
+y(2:2:end,2:2:end,1:2:end,2:2:end) = +O1i+O2i+O3i+O4i-O5i-O6i-O7i-O8i; % Paaba
+y(2:2:end,1:2:end,2:2:end,2:2:end) = +O1i+O2i-O3i-O4i+O5i+O6i-O7i-O8i; % Pabaa
+y(2:2:end,1:2:end,1:2:end,1:2:end) = -O1i-O2i+O3i+O4i+O5i+O6i-O7i-O8i; % Pabbb
+y(1:2:end,2:2:end,2:2:end,2:2:end) = +O1i-O2i+O3i-O4i+O5i-O6i+O7i-O8i; % Pbaaa
+y(1:2:end,2:2:end,1:2:end,1:2:end) = -O1i+O2i-O3i+O4i+O5i-O6i+O7i-O8i; % Pbabb
+y(1:2:end,1:2:end,2:2:end,1:2:end) = -O1i+O2i+O3i-O4i-O5i+O6i+O7i-O8i; % Pbbab
+y(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i; % Pbbba
 
-% Each orthant was divided by 2 in analysis, 8*1/2 = 4 hence 
-y = 0.25*y;
+global useAdj % Normalization differs for inverse and adjoint
+if ~useAdj
+    % Each orthant was divided by 2 in analysis, 8*1/2 = 4 hence 
+    y = 0.25*y;
+else
+    % Adjoint must use same multiplier as analysis!
+    y = 0.5*y;
+end
 end
 
 %-------------------------------------------------------------------------
