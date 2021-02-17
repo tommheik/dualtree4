@@ -3,7 +3,7 @@ function [A, D] = dualtree4(f, level, useDouble, varargin)
 %   [A,D] = DUALTREE4(F) returns the 4-D dual-tree complex wavelet
 %   transform of F at the maximum level, floor(log2(min(size(F)))). F is a
 %   real-valued 4-D array (X-by-Y-by-Z-by-T) where all dimensions (X,Y,Z,T)
-%   must be even and greater than or equal to 4. By default, the near
+%   must be even and greater than or equal to 4. For now, only the near
 %   symmetric biorthogonal wavelet filter with lengths 5 (scaling filter)
 %   and 7 (wavelet filter) is used for level 1 and the orthogonal Q-shift
 %   Hilbert wavelet filter pair of length 10 is used for levels greater
@@ -13,7 +13,7 @@ function [A, D] = dualtree4(f, level, useDouble, varargin)
 %   wavelet subbands in the 4-D dual-tree transform at each level. The
 %   wavelet coefficients are complex-valued. 
 %
-%   [A,D] = DUALTREE3(X,LEVEL) obtains the 4-D dual-tree transform down to
+%   [A,D] = DUALTREE4(X,LEVEL) obtains the 4-D dual-tree transform down to
 %   LEVEL. LEVEL is a positive integer greater than or equal to 2 and less
 %   than or equal to floor(log2(min(size(F))).
 %
@@ -210,24 +210,17 @@ sxtmp = size(xtmp);
 % sr = size(xtmp)/2; -> sr = sx;
 
 % Note this has been extended to be twice the original input size
-x1a = uint8(1:sx(1));
-x2a = uint8(1:sx(2));
-x3a = uint8(1:sx(3));
-x4a = uint8(1:sx(4));
+s1a = uint8(1:sx(1));
+s2a = uint8(1:sx(2));
+s3a = uint8(1:sx(3));
+s4a = uint8(1:sx(4));
 
-x1b = sx(1)+uint8(1:2*sx(1));
-x2b = sx(2)+uint8(1:2*sx(2));
-x3b = sx(3)+uint8(1:2*sx(3));
-x4b = sx(4)+uint8(1:2*sx(4));
+s1b = sx(1)+uint8(1:sx(1));
+s2b = sx(2)+uint8(1:sx(2));
+s3b = sx(3)+uint8(1:sx(3));
+s4b = sx(4)+uint8(1:sx(4));
 
-s1a = uint8(1:sx(1)); % x1a
-s2a = uint8(1:sx(2)); % x2a
-s3a = uint8(1:sx(3)); % x3a
-s4a = uint8(1:sx(4)); % x4a
-s1b = sx(1)+uint8(1:sxtmp(1)); % x1b
-s3b = sx(3)+uint8(1:sxtmp(3)); % x3b
-s4b = sx(4)+uint8(1:sxtmp(4)); % x4b
-xtmp(x1a,x2a,x3a,x4a) = x; % First orthant of xtmp
+xtmp(s1a,s2a,s3a,s4a) = x; % First orthant of xtmp
 clear x
 
 % Filter dimensions 4 and 3
@@ -237,7 +230,7 @@ for rowidx = 1:sx(1)
        % Select one 2D array and permute it so that the 4th dimension
        % forms the columns.
        %                                        t z x y
-       y = permute(xtmp(rowidx,colidx,x3a,x4a),[4,3,1,2]); 
+       y = permute(xtmp(rowidx,colidx,s3a,s4a),[4,3,1,2]); 
        %       Lowpass              Highpass
        y = [columnFilter(y,h0o); columnFilter(y,h1o)].'; % Combine and transpose
        sy = cat(2,[1,1],size(y)); % Consider size as a part of 4-D array
@@ -255,7 +248,7 @@ for sliceidx = 1:sxtmp(3)
         % Select one 2D array and permute it so that the 2nd dimension
         % forms the columns.
         %                                           y x z t
-        y = permute(xtmp(x1a,x2a,sliceidx,timeidx),[2,1,3,4]); 
+        y = permute(xtmp(s1a,s2a,sliceidx,timeidx),[2,1,3,4]); 
         %       Lowpass              Highpass
         y = [columnFilter(y,h0o); columnFilter(y,h1o)].'; % Combine and transpose
         sy = cat(2,[1,1],size(y)); % Consider size as a part of 4-D array
@@ -271,21 +264,21 @@ end
 A = xtmp(s1a,s2a,s3a,s4a);                                  % LLLL
 % Form the eight complex wavelets for 4^2-1 = 15 subbands for a total of
 % 15*8 = 120 sets of coefficients per level.
-D = cat(5, cube2complex(xtmp(x1b,x2a,x3a,x4a)),...          % HLLL
-            cube2complex(xtmp(x1a,x2b,x3a,x4a)),...         % LHLL
-            cube2complex(xtmp(x1b,x2b,x3a,x4a)),...         % HHLL
-            cube2complex(xtmp(x1a,x2a,x3b,x4a)),...         % LLHL
-            cube2complex(xtmp(x1b,x2a,x3b,x4a)),...         % HLHL
-            cube2complex(xtmp(x1a,x2b,x3b,x4a)),...         % LHHL
-            cube2complex(xtmp(x1b,x2b,x3b,x4a)),...         % HHHL
-            cube2complex(xtmp(x1a,x2a,x3a,x4b)),...         % LLLH
-            cube2complex(xtmp(x1b,x2a,x3a,x4b)),...         % HLLH
-            cube2complex(xtmp(x1a,x2b,x3a,x4b)),...         % LHLH
-            cube2complex(xtmp(x1b,x2b,x3a,x4b)),...         % HHLH
-            cube2complex(xtmp(x1a,x2a,x3b,x4b)),...         % LLHH
-            cube2complex(xtmp(x1b,x2a,x3b,x4b)),...         % HLHH
-            cube2complex(xtmp(x1a,x2b,x3b,x4b)),...         % LHHH
-            cube2complex(xtmp(x1b,x2b,x3b,x4b)));           % HHHH
+D = cat(5, cube2complex(xtmp(s1b,s2a,s3a,s4a)),...          % HLLL
+            cube2complex(xtmp(s1a,s2b,s3a,s4a)),...         % LHLL
+            cube2complex(xtmp(s1b,s2b,s3a,s4a)),...         % HHLL
+            cube2complex(xtmp(s1a,s2a,s3b,s4a)),...         % LLHL
+            cube2complex(xtmp(s1b,s2a,s3b,s4a)),...         % HLHL
+            cube2complex(xtmp(s1a,s2b,s3b,s4a)),...         % LHHL
+            cube2complex(xtmp(s1b,s2b,s3b,s4a)),...         % HHHL
+            cube2complex(xtmp(s1a,s2a,s3a,s4b)),...         % LLLH
+            cube2complex(xtmp(s1b,s2a,s3a,s4b)),...         % HLLH
+            cube2complex(xtmp(s1a,s2b,s3a,s4b)),...         % LHLH
+            cube2complex(xtmp(s1b,s2b,s3a,s4b)),...         % HHLH
+            cube2complex(xtmp(s1a,s2a,s3b,s4b)),...         % LLHH
+            cube2complex(xtmp(s1b,s2a,s3b,s4b)),...         % HLHH
+            cube2complex(xtmp(s1a,s2b,s3b,s4b)),...         % LHHH
+            cube2complex(xtmp(s1b,s2b,s3b,s4b)));           % HHHH
 end
 
 %-------------------------------------------------------------------
