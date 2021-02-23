@@ -10,26 +10,37 @@ function rec = idualtree4(A, D, varargin)
 %   sometimes needed if the 1st level detail coefficients were excluded
 %   during analysis ([A,D] = DUALTREE4(...,"ExcludeL1")).
 %
+%   ADJ = IDUALTREE4(A,D,"adjoint") approximates the adjoint operator of the
+%   forward transform. For adjoint the 1st level decomposition filters need 
+%   to be changed and a normalization identical to the analysis (DUALTREE4)
+%   needs to be used.
+%
 %   This code is heavily based on the IDUALTREE3-function.
 %
 %   Tommi Heikkilä
 %   Created 15.5.2020
-%   Last edited 17.2.2021
+%   Last edited 13.2.2021
 
-% A should be a 4-D matrix output from dualtree3
-validateattributes(A,{'numeric'},{'real','nonempty','finite','ndims',4},...
+% Check wheter approximation coefficients are stored in real or complex 
+% valued format.
+realA = isreal(A);
+if realA
+    % A should be a 4-D real-valued matrix output from dualtree4
+    validateattributes(A,{'real','numeric'},{'nonempty','finite','ndims',4},...
     'IDUALTREE4','A');
+else
+    % A should be a 5-D complex-valued matrix output from dualtree4
+    validateattributes(A,{'complex','numeric'},{'nonempty','finite','ndims',5},...
+    'IDUALTREE4','A');
+end
 % D should be a cell array of length at least one (two)
 validateattributes(D,{'cell'},{'nonempty'},'IDUALTREE4','D');
 
 % Obtain the level of the transform
 level = length(D);
 
-% Use single precision if needed
-useDouble = 1;
-if isa(A, 'single')
-    useDouble = 0;
-end
+% Use double precision if needed
+useDouble = isa(A, 'double');
 
 % If original object size is not given, it is set to empty array.
 if nargin < 3
@@ -46,15 +57,19 @@ global useAdj % Simpler to pass to other functions this way
     wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
 useAdj = strcmpi(useAdj,"adjoint"); % Use a simple boolean value
 
+if ~realA % Reorganize A into real valued array
+    A = complex2cube(A);
+end
+
 % Default filters
 params.Fsf = "nearsym5_7";
 params.sf = 10;
 params.sf = deblank(['qshift' num2str(params.sf)]);
 
 % Get the level 1 filters
-load(char(params.Fsf));
+load(char(params.Fsf),'Lo*','Hi*');
 % Get the q-shift filter
-load(char(params.sf));
+load(char(params.sf),'Lo*','Hi*');
 
 if useAdj % Use adjoint in place of inverse
     % Biorthogonal reconstruction filters need to be replaced with
@@ -125,7 +140,7 @@ end
 %------------------------------------------------------------------------
 function yrec = invColumnFilter(x,ha,hb)
 [r,c] = size(x);
-yrec = zeros(2*r,c);
+yrec = zeros(2*r,c,class(x));
 filtlen = length(ha);
 % The following will just work with even length filters
 L = fix(filtlen/2);
@@ -196,7 +211,7 @@ O8i = imag(z(:,:,:,:,8));
 clear z
 
 % Allocate array for result
-y = zeros(2*sz(1:4));
+y = zeros(2*sz(1:4),class(O1r));
 
 % Each orthant O_k is built from 8 functions Psi_l, 4 for real part and 4
 % for imaginary. The sign of these functions is based on the tree-like

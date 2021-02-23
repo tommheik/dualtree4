@@ -7,18 +7,21 @@ function [A, D] = dualtree4(f, level, useDouble, varargin)
 %   symmetric biorthogonal wavelet filter with lengths 5 (scaling filter)
 %   and 7 (wavelet filter) is used for level 1 and the orthogonal Q-shift
 %   Hilbert wavelet filter pair of length 10 is used for levels greater
-%   than or equal to 2. A is the matrix of real-valued final-level
-%   scaling (lowpass) coefficients. D is a 1-by-L cell array of wavelet
-%   coefficients, where L is the level of the transform. There are 120
-%   wavelet subbands in the 4-D dual-tree transform at each level. The
-%   wavelet coefficients are complex-valued. 
+%   than or equal to 2.
+%
+%   A is the matrix of complex or real-valued final-level scaling (lowpass)
+%   coefficients. By default complex values are used.
+%
+%   D is a 1-by-L cell array of wavelet coefficients, where L is the level
+%   of the transform. There are 120 wavelet subbands in the 4-D dual-tree
+%   transform at each level. The wavelet coefficients are complex-valued. 
 %
 %   [A,D] = DUALTREE4(X,LEVEL) obtains the 4-D dual-tree transform down to
 %   LEVEL. LEVEL is a positive integer greater than or equal to 2 and less
 %   than or equal to floor(log2(min(size(F))).
 %
 %   USEDOUBLE toggles between double precision arrays (useDouble = 1) and
-%   singles precision (useDouble = 0). Double precision is used by default.
+%   singles precision (useDouble = 0). Class of F is used by default.
 %
 %   "ExcludeL1" excludes the first level detail coefficients and only the
 %   lowpass filter is used. If this option is used a perfect reconstruction
@@ -29,7 +32,7 @@ function [A, D] = dualtree4(f, level, useDouble, varargin)
 %
 %   Tommi Heikkilä
 %   Created 12.5.2020
-%   Last edited 25.1.2021
+%   Last edited 23.2.2021
 
 % Ensure the input is numeric, real, and that it is four-dimensional
 validateattributes(f,{'numeric'},{'real','nonempty','finite','ndims',4},...
@@ -54,14 +57,21 @@ validateattributes(level,{'numeric'},...
     params.level = level;
 end
 
-if nargin < 3
-    useDouble = 1;
+if nargin < 3 % Default to class of f.
+    useDouble = isa(f,'double');
 end
 
 % Check for 'ExcludeLeve1Details' or "ExcludeLevel1Details"
 validopts = ["ExcludeL1","IncludeL1"];
 defaultopt = "IncludeL1";
 [opt, varargin] = ...
+    wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
+
+% Check for 'realA' or "realA", i.e. whether the approximation
+% coefficients are returns as complex coefficients.
+validopts = ["realA","complexA"];
+defaultopt = "complexA";
+[Atype, ~] = ...
     wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
 
 % Case f to double or single
@@ -72,8 +82,8 @@ else
 end
 
 % Obtain the first-level analysis filter and q-shift filters
-load(char(params.Faf));
-load(char(params.af));
+load(char(params.Faf),'LoD','HiD');
+load(char(params.af),'LoD*','HiD*');
 if ~useDouble
     LoD = single(LoD);
     HiD = single(HiD);
@@ -121,6 +131,9 @@ lev = 2;
 while lev <= level    
     [A,D{lev}] = level2Analysis(A,h0a,h1a,h0b,h1b);
     lev = lev+1;
+end
+if strcmpi(Atype,"complexA") % Check if A is returned as complex values
+    A = cube2complex(A);
 end
 end
 
@@ -201,11 +214,7 @@ function [A,D] = level1Highpass(x,h0o,h1o)
 % This function computes first level wavelet coefficients
 
 sx = size(x);
-if isa(x, 'single')
-    xtmp = zeros(2*sx,'single');
-else
-    xtmp = zeros(2*sx);
-end
+xtmp = zeros(2*sx,class(x));
 sxtmp = size(xtmp);
 % sr = size(xtmp)/2; -> sr = sx;
 
