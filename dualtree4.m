@@ -31,6 +31,7 @@ function [A, D] = dualtree4(f, level, useDouble, varargin)
 %   This code is heavily based on the DUALTREE3-function.
 %
 %   Tommi Heikkilä
+%   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 12.5.2020
 %   Last edited 23.2.2021
 

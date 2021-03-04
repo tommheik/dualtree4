@@ -18,6 +18,7 @@ function rec = idualtree4(A, D, varargin)
 %   This code is heavily based on the IDUALTREE3-function.
 %
 %   Tommi Heikkilä
+%   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 15.5.2020
 %   Last edited 13.2.2021
 
@@ -42,20 +43,20 @@ level = length(D);
 % Use double precision if needed
 useDouble = isa(A, 'double');
 
-% If original object size is not given, it is set to empty array.
-if nargin < 3
-    orgSize = [];
-else
-    orgSize = varargin{1};
-end
-
 % Check for 'adjoint' or "adjoint"
 validopts = ["adjoint","inverse"];
 defaultopt = "inverse";
 global useAdj % Simpler to pass to other functions this way
-[useAdj, ~] = ...
+[useAdj, varargin] = ...
     wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
 useAdj = strcmpi(useAdj,"adjoint"); % Use a simple boolean value
+
+% If original object size is not given, it is set to empty array.
+if isempty(varargin)
+    orgSize = [];
+else
+    orgSize = varargin{1};
+end
 
 if ~realA % Reorganize A into real valued array
     A = complex2cube(A);
