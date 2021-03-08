@@ -1,5 +1,5 @@
 # dualtree4
-### 4D dual-tree complex wavelet transform for Matlab
+## 4D dual-tree complex wavelet transform for Matlab
 
 This is the respository for Matlab implementation of **4D** (4 dimensional) **dual-tree complex wavelet transform** and the corresponding **inverse transform** by Tommi Heikkilä (University of Helsinki, Department of Mathematics and Statistics).
 
