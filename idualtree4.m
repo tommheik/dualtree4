@@ -20,9 +20,9 @@ function rec = idualtree4(A, D, varargin)
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 15.5.2020
-%   Last edited 13.2.2021
+%   Last edited 29.3.2021
 
-% Check wheter approximation coefficients are stored in real or complex 
+% Check whether approximation coefficients are stored in real or complex 
 % valued format.
 realA = isreal(A);
 if realA
@@ -34,7 +34,7 @@ else
     validateattributes(A,{'complex','numeric'},{'nonempty','finite','ndims',5},...
     'IDUALTREE4','A');
 end
-% D should be a cell array of length at least one (two)
+% D should be a cell array
 validateattributes(D,{'cell'},{'nonempty'},'IDUALTREE4','D');
 
 % Obtain the level of the transform
@@ -89,8 +89,8 @@ if ~useDouble
 end
 
 % First level filters
-g0o = LoR;
-g1o = HiR;
+g0 = LoR;
+g1 = HiR;
 
 % Levels >= 2
 g0a = LoRa;
@@ -127,23 +127,27 @@ end
 
 % Special case where 1st level details were excluded
 if level == 1 && isempty(D{1})
-    A = level1SynthNoHighpass(A,g0o,orgSize);
+    rec = level1SynthNoHighpass(A,g0,orgSize);
 end
 % Synthesis from 1st level detail coefficients
 if level == 1 && ~isempty(D{1})
-    A = level1SynthHighpass(A,D{1},g0o,g1o);
+    rec = level1SynthHighpass(A,D{1},g0,g1);
 end
-
-% Return the recomposed 4-D object
-rec = A;
 end
 
 %------------------------------------------------------------------------
-function yrec = invColumnFilter(x,ha,hb)
-[r,c] = size(x);
-yrec = zeros(2*r,c,class(x));
+function Y = invOddEvenFilter(X,ha,hb,perm)
+% Convolve one dimension of X using both filters. Interlace the values to
+% double the length of the convolved direction.
+
+% Permute X so that the first dimension is convolved
+if ~isempty(perm); X = permute(X,perm); end
+
+[r,c,s,t] = size(X); % Rows, Columns, Slices, Time steps
+Y = zeros(2*r,c,s,t,class(X));
+
 filtlen = length(ha);
-% The following will just work with even length filters
+% The following will only work with even length filters
 L = fix(filtlen/2);
 matIdx = wextend('ar','sym',(uint8(1:r))',L);
 % Polyphase components of the filters
@@ -151,68 +155,69 @@ haOdd = ha(1:2:filtlen);
 haEven = ha(2:2:filtlen);
 hbOdd = hb(1:2:filtlen);
 hbEven = hb(2:2:filtlen);
-s = uint8(1:4:(r*2));
-if rem(L,2) == 0
-    
-    t = uint8(4:2:(r+filtlen));
-    if dot(ha,hb) > 0
-        ta = t; tb = t - 1;
-    else
-        ta = t - 1; tb = t;
-    end
-    
-    yrec(s,:)   = conv2(x(matIdx(tb-2),:),haEven(:),'valid');
-    yrec(s+1,:) = conv2(x(matIdx(ta-2),:),hbEven(:),'valid');
-    yrec(s+2,:) = conv2(x(matIdx(tb),:),haOdd(:),'valid');
-    yrec(s+3,:) = conv2(x(matIdx(ta),:),hbOdd(:),'valid'); 
-    
-else
-    
-    t = uint8(3:2:(r+filtlen-1));
-    if dot(ha,hb) > 0
-        ta = t; tb = t - 1;
-    else
-        ta = t - 1; tb = t;
-    end
-        
-    s = uint8(1:4:(r*2));
 
-    yrec(s,:)   = conv2(x(matIdx(tb),:),haOdd(:),'valid');
-    yrec(s+1,:) = conv2(x(matIdx(ta),:),hbOdd(:),'valid');
-    yrec(s+2,:) = conv2(x(matIdx(tb),:),haEven(:),'valid');
-    yrec(s+3,:) = conv2(x(matIdx(ta),:),hbEven(:),'valid');
+s = uint8(1:4:(r*2)); % Interlacing indicies
+
+t = uint8(4:2:(r+filtlen)); % matIdx indicies
+if dot(ha,hb) > 0
+    ta = t; tb = t - 1;
+else
+    ta = t - 1; tb = t;
 end
+if rem(L,2) == 0    % L is even  
+    
+    % Convolve
+    Y(s,:,:,:)   = convn(X(matIdx(tb-2),:,:,:),hbEven(:),'valid');
+    Y(s+1,:,:,:) = convn(X(matIdx(ta-2),:,:,:),haEven(:),'valid');
+    Y(s+2,:,:,:) = convn(X(matIdx(tb),:,:,:),hbOdd(:),'valid');
+    Y(s+3,:,:,:) = convn(X(matIdx(ta),:,:,:),haOdd(:),'valid'); 
+    
+else % L is odd
+    
+    ta = ta - 1; % Shited one to the left
+    tb = tb - 1; % Shited one to the left
+    
+    % Convolve (note the different order!)
+    Y(s,:,:,:)   = convn(X(matIdx(tb),:,:,:),hbOdd(:),'valid');
+    Y(s+1,:,:,:) = convn(X(matIdx(ta),:,:,:),haOdd(:),'valid');
+    Y(s+2,:,:,:) = convn(X(matIdx(tb),:,:,:),hbEven(:),'valid');
+    Y(s+3,:,:,:) = convn(X(matIdx(ta),:,:,:),haEven(:),'valid');
+end
+% Revert permutation
+if ~isempty(perm); Y = ipermute(Y,perm); end
 end
 
 %-------------------------------------------------------------------------
-function y = complex2cube(z)
+function Y = complex2cube(Z)
+% Reorganize the complex valued array into interlaced real valued array of
+% twice the size.
 
-sz = size(z);
+sZ = size(Z);
 % Split the array into real and imaginary parts of the 8 orthants
 % Real parts
-O1r = real(z(:,:,:,:,1));
-O2r = real(z(:,:,:,:,2));
-O3r = real(z(:,:,:,:,3));
-O4r = real(z(:,:,:,:,4));
-O5r = real(z(:,:,:,:,5));
-O6r = real(z(:,:,:,:,6));
-O7r = real(z(:,:,:,:,7));
-O8r = real(z(:,:,:,:,8));
+O1r = real(Z(:,:,:,:,1));
+O2r = real(Z(:,:,:,:,2));
+O3r = real(Z(:,:,:,:,3));
+O4r = real(Z(:,:,:,:,4));
+O5r = real(Z(:,:,:,:,5));
+O6r = real(Z(:,:,:,:,6));
+O7r = real(Z(:,:,:,:,7));
+O8r = real(Z(:,:,:,:,8));
 % Imaginary parts
-O1i = imag(z(:,:,:,:,1));
-O2i = imag(z(:,:,:,:,2));
-O3i = imag(z(:,:,:,:,3));
-O4i = imag(z(:,:,:,:,4));
-O5i = imag(z(:,:,:,:,5));
-O6i = imag(z(:,:,:,:,6));
-O7i = imag(z(:,:,:,:,7));
-O8i = imag(z(:,:,:,:,8));
+O1i = imag(Z(:,:,:,:,1));
+O2i = imag(Z(:,:,:,:,2));
+O3i = imag(Z(:,:,:,:,3));
+O4i = imag(Z(:,:,:,:,4));
+O5i = imag(Z(:,:,:,:,5));
+O6i = imag(Z(:,:,:,:,6));
+O7i = imag(Z(:,:,:,:,7));
+O8i = imag(Z(:,:,:,:,8));
 
 % Save memory
-clear z
+clear Z
 
 % Allocate array for result
-y = zeros(2*sz(1:4),class(O1r));
+Y = zeros(2*sZ(1:4),class(O1r));
 
 % Each orthant O_k is built from 8 functions Psi_l, 4 for real part and 4
 % for imaginary. The sign of these functions is based on the tree-like
@@ -222,114 +227,106 @@ y = zeros(2*sz(1:4),class(O1r));
 % cancel out.
 
 % Combine real parts
-y(2:2:end,2:2:end,2:2:end,2:2:end) = +O1r+O2r+O3r+O4r+O5r+O6r+O7r+O8r; % Paaaa
-y(2:2:end,2:2:end,1:2:end,1:2:end) = -O1r-O2r-O3r-O4r+O5r+O6r+O7r+O8r; % Paabb
-y(2:2:end,1:2:end,2:2:end,1:2:end) = -O1r-O2r+O3r+O4r-O5r-O6r+O7r+O8r; % Pabab
-y(2:2:end,1:2:end,1:2:end,2:2:end) = -O1r-O2r+O3r+O4r+O5r+O6r-O7r-O8r; % Pabba
-y(1:2:end,2:2:end,2:2:end,1:2:end) = -O1r+O2r-O3r+O4r-O5r+O6r-O7r+O8r; % Pbaab
-y(1:2:end,2:2:end,1:2:end,2:2:end) = -O1r+O2r-O3r+O4r+O5r-O6r+O7r-O8r; % Pbaba
-y(1:2:end,1:2:end,2:2:end,2:2:end) = -O1r+O2r+O3r-O4r-O5r+O6r+O7r-O8r; % Pbbaa
-y(1:2:end,1:2:end,1:2:end,1:2:end) = +O1r-O2r-O3r+O4r-O5r+O6r+O7r-O8r; % Pbbbb
+Y(2:2:end,2:2:end,2:2:end,2:2:end) = +O1r+O2r+O3r+O4r+O5r+O6r+O7r+O8r; % Paaaa
+Y(2:2:end,2:2:end,1:2:end,1:2:end) = -O1r-O2r-O3r-O4r+O5r+O6r+O7r+O8r; % Paabb
+Y(2:2:end,1:2:end,2:2:end,1:2:end) = -O1r-O2r+O3r+O4r-O5r-O6r+O7r+O8r; % Pabab
+Y(2:2:end,1:2:end,1:2:end,2:2:end) = -O1r-O2r+O3r+O4r+O5r+O6r-O7r-O8r; % Pabba
+Y(1:2:end,2:2:end,2:2:end,1:2:end) = -O1r+O2r-O3r+O4r-O5r+O6r-O7r+O8r; % Pbaab
+Y(1:2:end,2:2:end,1:2:end,2:2:end) = -O1r+O2r-O3r+O4r+O5r-O6r+O7r-O8r; % Pbaba
+Y(1:2:end,1:2:end,2:2:end,2:2:end) = -O1r+O2r+O3r-O4r-O5r+O6r+O7r-O8r; % Pbbaa
+Y(1:2:end,1:2:end,1:2:end,1:2:end) = +O1r-O2r-O3r+O4r-O5r+O6r+O7r-O8r; % Pbbbb
 
 % Combine imaginary parts
-y(2:2:end,2:2:end,2:2:end,1:2:end) = +O1i+O2i+O3i+O4i+O5i+O6i+O7i+O8i; % Paaab
-y(2:2:end,2:2:end,1:2:end,2:2:end) = +O1i+O2i+O3i+O4i-O5i-O6i-O7i-O8i; % Paaba
-y(2:2:end,1:2:end,2:2:end,2:2:end) = +O1i+O2i-O3i-O4i+O5i+O6i-O7i-O8i; % Pabaa
-y(2:2:end,1:2:end,1:2:end,1:2:end) = -O1i-O2i+O3i+O4i+O5i+O6i-O7i-O8i; % Pabbb
-y(1:2:end,2:2:end,2:2:end,2:2:end) = +O1i-O2i+O3i-O4i+O5i-O6i+O7i-O8i; % Pbaaa
-y(1:2:end,2:2:end,1:2:end,1:2:end) = -O1i+O2i-O3i+O4i+O5i-O6i+O7i-O8i; % Pbabb
-y(1:2:end,1:2:end,2:2:end,1:2:end) = -O1i+O2i+O3i-O4i-O5i+O6i+O7i-O8i; % Pbbab
-y(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i; % Pbbba
+Y(2:2:end,2:2:end,2:2:end,1:2:end) = +O1i+O2i+O3i+O4i+O5i+O6i+O7i+O8i; % Paaab
+Y(2:2:end,2:2:end,1:2:end,2:2:end) = +O1i+O2i+O3i+O4i-O5i-O6i-O7i-O8i; % Paaba
+Y(2:2:end,1:2:end,2:2:end,2:2:end) = +O1i+O2i-O3i-O4i+O5i+O6i-O7i-O8i; % Pabaa
+Y(2:2:end,1:2:end,1:2:end,1:2:end) = -O1i-O2i+O3i+O4i+O5i+O6i-O7i-O8i; % Pabbb
+Y(1:2:end,2:2:end,2:2:end,2:2:end) = +O1i-O2i+O3i-O4i+O5i-O6i+O7i-O8i; % Pbaaa
+Y(1:2:end,2:2:end,1:2:end,1:2:end) = -O1i+O2i-O3i+O4i+O5i-O6i+O7i-O8i; % Pbabb
+Y(1:2:end,1:2:end,2:2:end,1:2:end) = -O1i+O2i+O3i-O4i-O5i+O6i+O7i-O8i; % Pbbab
+Y(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i; % Pbbba
 
 global useAdj % Normalization differs for inverse and adjoint
 if ~useAdj
     % Each orthant was divided by 2 in analysis, 8*1/2 = 4 hence 
-    y = 0.25*y;
+    Y = 0.25*Y;
 else
     % Adjoint must use same multiplier as analysis!
-    y = 0.5*y;
+    Y = 0.5*Y;
 end
 end
 
 %-------------------------------------------------------------------------
-function y = level2synthesis(yl,yh,g0a,g0b,g1a,g1b,prev_level_size)
+function Y = level2synthesis(Yl,Yh,g0a,g0b,g1a,g1b,prev_level_size)
 % From this we will only return the scaling coefficients at the next finer
 % resolution level
-LLLLsize = size(yl);
-if isa(yl,'single') || isa(yh,'single')
-    yl = single(yl);
-    yh = single(yh);
-    y = zeros(2*LLLLsize,'single');
+LLLLsize = size(Yl);
+if isa(Yl,'single') || isa(Yh,'single')
+    Yl = single(Yl);
+    Yh = single(Yh);
+    Y = zeros(2*LLLLsize,'single');
 else
-    y = zeros(2*LLLLsize);
+    Y = zeros(2*LLLLsize);
 end
-sy = size(y);
+sY = size(Y);
 
-s1a = uint8(1:sy(1)/2);
-s2a = uint8(1:sy(2)/2);
-s3a = uint8(1:sy(3)/2);
-s4a = uint8(1:sy(4)/2);
-s1b = s1a+uint8(sy(1)/2);
-s2b = s2a+uint8(sy(2)/2);
-s3b = s3a+uint8(sy(3)/2);
-s4b = s4a+uint8(sy(4)/2);
+s1a = uint8(1:sY(1)/2);
+s2a = uint8(1:sY(2)/2);
+s3a = uint8(1:sY(3)/2);
+s4a = uint8(1:sY(4)/2);
+s1b = s1a+uint8(sY(1)/2);
+s2b = s2a+uint8(sY(2)/2);
+s3b = s3a+uint8(sY(3)/2);
+s4b = s4a+uint8(sY(4)/2);
 
 % Fill y array for synthesis
-y(s1a,s2a,s3a,s4a) = yl;
+Y(s1a,s2a,s3a,s4a) = Yl;
 clear yl
 % There are 120 directions, 8 for each of the 15 filter setups
 ind = reshape(uint8(1:120), [8,15]).'; % Helpful index matrix
 
-y(s1b,s2a,s3a,s4a) = complex2cube(yh(:,:,:,:,ind(1,:)));    % HLLL
-y(s1a,s2b,s3a,s4a) = complex2cube(yh(:,:,:,:,ind(2,:)));    % LHLL
-y(s1b,s2b,s3a,s4a) = complex2cube(yh(:,:,:,:,ind(3,:)));    % HHLL
-y(s1a,s2a,s3b,s4a) = complex2cube(yh(:,:,:,:,ind(4,:)));    % LLHL
-y(s1b,s2a,s3b,s4a) = complex2cube(yh(:,:,:,:,ind(5,:)));    % HLHL
-y(s1a,s2b,s3b,s4a) = complex2cube(yh(:,:,:,:,ind(6,:)));    % LHHL
-y(s1b,s2b,s3b,s4a) = complex2cube(yh(:,:,:,:,ind(7,:)));    % HHHL
-y(s1a,s2a,s3a,s4b) = complex2cube(yh(:,:,:,:,ind(8,:)));    % LLLH
-y(s1b,s2a,s3a,s4b) = complex2cube(yh(:,:,:,:,ind(9,:)));    % HLLH
-y(s1a,s2b,s3a,s4b) = complex2cube(yh(:,:,:,:,ind(10,:)));   % LHLH
-y(s1b,s2b,s3a,s4b) = complex2cube(yh(:,:,:,:,ind(11,:)));   % HHLH
-y(s1a,s2a,s3b,s4b) = complex2cube(yh(:,:,:,:,ind(12,:)));   % LLHH
-y(s1b,s2a,s3b,s4b) = complex2cube(yh(:,:,:,:,ind(13,:)));   % HLHH
-y(s1a,s2b,s3b,s4b) = complex2cube(yh(:,:,:,:,ind(14,:)));   % LHHH
-y(s1b,s2b,s3b,s4b) = complex2cube(yh(:,:,:,:,ind(15,:)));   % HHHH
+Y(s1b,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
+Y(s1a,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
+Y(s1b,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
+Y(s1a,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
+Y(s1b,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
+Y(s1a,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
+Y(s1b,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
+Y(s1a,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
+Y(s1b,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
+Y(s1a,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
+Y(s1b,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
+Y(s1a,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
+Y(s1b,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
+Y(s1a,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
+Y(s1b,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
 
 % yh no longer needed so clear it to save memory!
-size_curr_level = size(yh);
+size_curr_level = size(Yh);
 size_curr_level = size_curr_level(1:4);
 clear yh
 
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
-% Filter dimensions 1 and 2
-% Note that we loop through full number of slices and time steps!
-for timeidx = 1:sy(4)
-    for sliceidx = 1:sy(3)
-        % 1st dimension
-        ytmp = invColumnFilter(y(s1a,:,sliceidx,timeidx),g0b,g0a) + ...
-            invColumnFilter(y(s1b,:,sliceidx,timeidx),g1b,g1a);
-        % 2nd dimension
-        % ytmp has to be transposed before and after filtering
-        y(:,:,sliceidx,timeidx) = invColumnFilter(ytmp(:,s2a).',g0b,g0a).' + ...
-            invColumnFilter(ytmp(:,s2b).',g1b,g1a).';
-    end
-end
 
-% Filter dimensions 3 and 4
-% Note that we loop through  full number of rows and columns!
-for colidx = 1:sy(2)
-    for rowidx = 1:sy(1)
-        % 3rd dimension
-        ytmp = invColumnFilter(squeeze(y(rowidx,colidx,s3a,:)),g0b,g0a) + ...
-            invColumnFilter(squeeze(y(rowidx,colidx,s3b,:)),g1b,g1a);
-        % 4th dimension
-        % ytmp has to be transposed before and after filtering
-        y(rowidx,colidx,:,:) = reshape((invColumnFilter(ytmp(:,s4a).',g0b,g0a) + ...
-            invColumnFilter(ytmp(:,s4b).',g1b,g1a)).',[1,1,sy(3),sy(4)]);
-    end
-end
-clear ytmp
+% Filter dimension 1
+perm = []; % Same as [1 2 3 4]
+Y = invOddEvenFilter(Y(s1a,:,:,:),g0a,g0b,perm) + ... % Lowpass
+    invOddEvenFilter(Y(s1b,:,:,:),g1a,g1b,perm);      % Highpass
+
+% Filter dimension 2
+perm = [2 1 3 4];
+Y = invOddEvenFilter(Y(:,s2a,:,:),g0a,g0b,perm) + ... % Lowpass
+    invOddEvenFilter(Y(:,s2b,:,:),g1a,g1b,perm);      % Highpass
+
+% Filter dimension 3
+perm = [3 2 1 4];
+Y = invOddEvenFilter(Y(:,:,s3a,:),g0a,g0b,perm) + ... % Lowpass
+    invOddEvenFilter(Y(:,:,s3b,:),g1a,g1b,perm);      % Highpass
+
+% Filter dimension 4
+perm = [4 2 3 1];
+Y = invOddEvenFilter(Y(:,:,:,s4a),g0a,g0b,perm) + ... % Lowpass
+    invOddEvenFilter(Y(:,:,:,s4b),g1a,g1b,perm);      % Highpass
 
 % Now check if the size of the previous level is exactly twice the size
 % of the current level. If it is exactly twice the size, the data was not
@@ -338,164 +335,163 @@ clear ytmp
 
 % X
 if prev_level_size(1) ~= 2*size_curr_level(1)
-    y = y(2:end-1,:,:,:);
+    Y = Y(2:end-1,:,:,:);
 end
 % Y
 if  prev_level_size(2) ~= 2*size_curr_level(2)
-    y = y(:,2:end-1,:,:);
+    Y = Y(:,2:end-1,:,:);
 end
 % Z
 if prev_level_size(3) ~= 2*size_curr_level(3)
-    y = y(:,:,2:end-1,:);
+    Y = Y(:,:,2:end-1,:);
 end
 % T
 if prev_level_size(4) ~= 2*size_curr_level(4)
-    y = y(:,:,:,2:end-1);
+    Y = Y(:,:,:,2:end-1);
 end
 end
 
 %------------------------------------------------------------------------
-function y = columnFilter(x,h)
-% Filter the columns of x with h. This function does not decimate the
-% output.
+function Y = oneDFilter(X,h,perm)
+% Filter one dimension of X with h, where h is a column vector. The output
+% is NOT downsampled
 
-% This determines the symmetric extension of the matrix
-L = length(h);
-M = fix(L/2);
+% Permute X so that the first dimension is convolved
+if ~isempty(perm); X = permute(X,perm); end
+    
+% Determine symmetric extension amount
+h = h(:);
+lh = length(h);
+a = fix(lh/2);
 
-x = wextend('ar','sym',x,M);
-y = conv2(x,h(:),'valid');
+% Extend X and convolve
+X = wextend4D(X,a);
+Y = convn(X,h,'valid');
+clear X
+
+% Revert permutation
+if ~isempty(perm); Y = ipermute(Y,perm); end
 end
 
 %------------------------------------------------------------------------
-function yl = level1SynthNoHighpass(yl,g0o,orgSize)
-% We use no highpass filter here
-LLLLsize = size(yl);
-s1 = uint8(1:LLLLsize(1));
-s2 = uint8(1:LLLLsize(2));
-s3 = uint8(1:LLLLsize(3));
-s4 = uint8(1:LLLLsize(4));
+function X = wextend4D(X,a)
+% 4D version of wextend using symmetric half-point extension on rows
+lx = size(X,1);
+% We get the indicies from the original wextend
+I = wextend('ac','sym',1:lx,a);
+X = X(I,:,:,:);
+end
+
+%------------------------------------------------------------------------
+function Y = level1SynthNoHighpass(Y,g0,orgSize)
+% Finest level synthesis using only scaling coefficients.
 
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
-% Filter dimensions 1 and 2
-for sliceidx = s3
-    for timeidx = s4
-        % 1st dimension
-        y = columnFilter(yl(:,:,sliceidx,timeidx),g0o);
-        % 2nd dimension
-        % y is tranposed before and after filtering.
-        yl(:,:,sliceidx,timeidx) = columnFilter(y.',g0o).';
-    end
-end
 
-% Filter dimensions 3 and 4
-for rowidx = s1
-    for colidx = s2
-        % 3rd dimension
-        y = columnFilter(squeeze(yl(rowidx,colidx,:,:)),g0o);
-        % 4th dimension
-        % y is transposed before and after filtering and then extended to
-        % a part of 4-D array.
-        yl(rowidx,colidx,:,:) = reshape(columnFilter(y.',g0o).',[1,1,LLLLsize(3),LLLLsize(4)]);
-    end
-end
+% Filter dimension 1
+perm = []; % Same as [1 2 3 4]
+Y = oneDFilter(Y,g0,perm);
+
+% Filter dimension 2
+perm = [2 1 3 4];
+Y = oneDFilter(Y,g0,perm);
+
+% Filter dimension 3
+perm = [3 2 1 4];
+Y = oneDFilter(Y,g0,perm);
+
+% Filter dimension 4
+perm = [4 2 3 1];
+Y = oneDFilter(Y,g0,perm);
 
 % If the user specifies "excludeL1" at the input, it is possible that
 % the output data size may not be correct. To correct for that, the user
 % can provide the orignal data size as an input.
 
 if ~isempty(orgSize)  % Original size is known  
-    size_curr_level = size(yl);
+    size_curr_level = size(Y);
     % Dimensions are cut if needed
     if orgSize(1) ~= size_curr_level(1)
-        yl = yl(2:end-1,:,:,:);
+        Y = Y(2:end-1,:,:,:);
     end
     if  orgSize(2) ~= size_curr_level(2)
-        yl = yl(:,2:end-1,:,:);
+        Y = Y(:,2:end-1,:,:);
     end
     if orgSize(3) ~= size_curr_level(3)
-        yl = yl(:,:,2:end-1,:);
+        Y = Y(:,:,2:end-1,:);
     end
     if orgSize(4) ~= size_curr_level(4)
-        yl = yl(:,:,:,2:end-1);
+        Y = Y(:,:,:,2:end-1);
     end
 end
 end
 
 %-------------------------------------------------------------------------
-function y = level1SynthHighpass(yl,yh,g0o,g1o)
+function Y = level1SynthHighpass(Yl,Yh,g0,g1)
+% Finest level synthesis using all coefficients.
 
-LLLLsize = size(yl);
-if isa(yl,'single') || isa(yh,'single')
-    yl = single(yl);
-    yh = single(yh);
-    y = zeros(2*LLLLsize,'single');
+LLLLsize = size(Yl);
+if isa(Yl,'single') || isa(Yh,'single')
+    Yl = single(Yl);
+    Yh = single(Yh);
+    Y = zeros(2*LLLLsize,'single');
 else
-    y = zeros(2*LLLLsize);
+    Y = zeros(2*LLLLsize);
 end
-sy = size(y);
 
-x1a = uint8(1:LLLLsize(1));
-x2a = uint8(1:LLLLsize(2));
-x3a = uint8(1:LLLLsize(3));
-x4a = uint8(1:LLLLsize(4));
-x1b = x1a+LLLLsize(1);
-x2b = x2a+LLLLsize(2);
-x3b = x3a+LLLLsize(3);
-x4b = x4a+LLLLsize(4);
+s1a = uint8(1:LLLLsize(1));
+s2a = uint8(1:LLLLsize(2));
+s3a = uint8(1:LLLLsize(3));
+s4a = uint8(1:LLLLsize(4));
+s1b = s1a+LLLLsize(1);
+s2b = s2a+LLLLsize(2);
+s3b = s3a+LLLLsize(3);
+s4b = s4a+LLLLsize(4);
 
 % Fill y array for synthesis
-y(x1a,x2a,x3a,x4a) = yl;
-clear yl
+Y(s1a,s2a,s3a,s4a) = Yl;
+clear Yl
 % There are 120 directions, 8 for each of the 15 filter setups
 ind = reshape(uint8(1:120), [8,15]).'; % Helpful index matrix
 
-y(x1b,x2a,x3a,x4a) = complex2cube(yh(:,:,:,:,ind(1,:)));    % HLLL
-y(x1a,x2b,x3a,x4a) = complex2cube(yh(:,:,:,:,ind(2,:)));    % LHLL
-y(x1b,x2b,x3a,x4a) = complex2cube(yh(:,:,:,:,ind(3,:)));    % HHLL
-y(x1a,x2a,x3b,x4a) = complex2cube(yh(:,:,:,:,ind(4,:)));    % LLHL
-y(x1b,x2a,x3b,x4a) = complex2cube(yh(:,:,:,:,ind(5,:)));    % HLHL
-y(x1a,x2b,x3b,x4a) = complex2cube(yh(:,:,:,:,ind(6,:)));    % LHHL
-y(x1b,x2b,x3b,x4a) = complex2cube(yh(:,:,:,:,ind(7,:)));    % HHHL
-y(x1a,x2a,x3a,x4b) = complex2cube(yh(:,:,:,:,ind(8,:)));    % LLLH
-y(x1b,x2a,x3a,x4b) = complex2cube(yh(:,:,:,:,ind(9,:)));    % HLLH
-y(x1a,x2b,x3a,x4b) = complex2cube(yh(:,:,:,:,ind(10,:)));   % LHLH
-y(x1b,x2b,x3a,x4b) = complex2cube(yh(:,:,:,:,ind(11,:)));   % HHLH
-y(x1a,x2a,x3b,x4b) = complex2cube(yh(:,:,:,:,ind(12,:)));   % LLHH
-y(x1b,x2a,x3b,x4b) = complex2cube(yh(:,:,:,:,ind(13,:)));   % HLHH
-y(x1a,x2b,x3b,x4b) = complex2cube(yh(:,:,:,:,ind(14,:)));   % LHHH
-y(x1b,x2b,x3b,x4b) = complex2cube(yh(:,:,:,:,ind(15,:)));   % HHHH
+Y(s1b,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
+Y(s1a,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
+Y(s1b,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
+Y(s1a,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
+Y(s1b,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
+Y(s1a,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
+Y(s1b,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
+Y(s1a,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
+Y(s1b,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
+Y(s1a,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
+Y(s1b,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
+Y(s1a,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
+Y(s1b,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
+Y(s1a,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
+Y(s1b,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
 clear yh
 
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
-% Filter dimensions 1 and 2
-% Note that we loop through doubled number of slices and time steps!
-for timeidx = 1:sy(4)
-    for sliceidx = 1:sy(3)
-        % 1st dimension
-        ytmp = columnFilter(y(x1a,:,sliceidx,timeidx),g0o) + ...
-            columnFilter(y(x1b,:,sliceidx,timeidx),g1o);
-        % 2nd dimension
-        % ytmp has to be transposed before and after filtering
-        y(x1a,x2a,sliceidx,timeidx) = columnFilter(ytmp(:,x2a).',g0o).' + ...
-            columnFilter(ytmp(:,x2b).',g1o).';
-    end
-end
-        
-% Filter dimensions 3 and 4
-% Note that we loop through  normal number of rows and columns!
-for colidx = 1:LLLLsize(2)
-    for rowidx = 1:LLLLsize(1)
-        % 3rd dimension
-        ytmp = columnFilter(squeeze(y(rowidx,colidx,x3a,:)),g0o) + ...
-            columnFilter(squeeze(y(rowidx,colidx,x3b,:)),g1o);
-        % 4th dimension
-        % ytmp has to be transposed before and after filtering
-        y(rowidx,colidx,x3a,x4a) = reshape((columnFilter(ytmp(:,x4a).',g0o) + ...
-            columnFilter(ytmp(:,x4b).',g1o)).',[1,1,LLLLsize(3),LLLLsize(4)]);
-    end
-end
+% Notice that the size of Y is halved at every step in the respective
+% direction/dimension.
 
-% Return synthezised object
-y = y(x1a,x2a,x3a,x4a);
+% Filter dimension 1
+perm = []; % Same as [1 2 3 4]
+Y = oneDFilter(Y(s1a,:,:,:),g0,perm) + ... % Lowpass
+    oneDFilter(Y(s1b,:,:,:),g1,perm);      % Highpass
+
+% Filter dimension 2
+perm = [2 1 3 4];
+Y = oneDFilter(Y(:,s2a,:,:),g0,perm) + ... % Lowpass
+    oneDFilter(Y(:,s2b,:,:),g1,perm);      % Highpass
+
+% Filter dimension 3
+perm = [3 2 1 4];
+Y = oneDFilter(Y(:,:,s3a,:),g0,perm) + ... % Lowpass
+    oneDFilter(Y(:,:,s3b,:),g1,perm);      % Highpass
+
+% Filter dimension 4
+perm = [4 2 3 1];
+Y = oneDFilter(Y(:,:,:,s4a),g0,perm) + ... % Lowpass
+    oneDFilter(Y(:,:,:,s4b),g1,perm);      % Highpass
 end
