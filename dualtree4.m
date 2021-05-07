@@ -134,38 +134,122 @@ end
 end
 
 %------------------------------------------------------------------------
-function Y = oneDFilter(X,h,perm)
+function X = oneDFilter(X,h,dim)
 % Filter one dimension of X with h, where h is a column vector. The output
 % is NOT downsampled
 
-% Permute X so that the first dimension is convolved
-if ~isempty(perm); X = permute(X,perm); end
-    
 % Determine symmetric extension amount
 h = h(:);
 lh = length(h);
 a = fix(lh/2);
 
+% Permute h so that it is "dim-dimensional" vector
+switch dim
+    case 1
+        % Do nothing
+    case 2
+        h = h';
+    case 3
+        h = reshape(h,1,1,[]);
+    case 4
+        h = reshape(h,1,1,1,[]);
+end
+
 % Extend X and convolve
-X = wextend4D(X,a);
-Y = convn(X,h,'valid');
-clear X
+Y = wextend4D(X,a,dim);
+X = convn(Y,h,'valid');
 
-% Revert permutation
-if ~isempty(perm); Y = ipermute(Y,perm); end
 end
 
 %------------------------------------------------------------------------
-function X = wextend4D(X,a)
+function Y = wextend4D(X,a,dim)
 % 4D version of wextend using symmetric half-point extension on rows
-lx = size(X,1);
+lx = size(X,dim);
 % We get the indicies from the original wextend
-I = wextend('ac','sym',1:lx,a);
-X = X(I,:,:,:);
+i = wextend('ac','sym',1:lx,a);
+% Create cell array where i is placed on dim'th place
+I = cell(1,4); I(:) = {':'};
+I{dim} = i;
+% Extend dim'th direction using i
+Y = X(I{:});
 end
 
 %------------------------------------------------------------------------
-function Z = OddEvenFilter4D(X,ha,hb,perm)
+function Z = OddEvenFilter4D(X,ha,hb,dim)
+% Dual filter scheme where the convolutions using filters ha and hb are
+% interlaced.
+% THIS FUNCTION HALVES THE SIZE OF THE CONVOLVED DIRECTION!
+% This is because the input for level 2 and up has NOT been downsampled
+% yet and hence it is twice the size it should be.
+
+% ha and hb are identical length (even) filters
+% Case to column vectors
+ha = ha(:);
+hb = hb(:);
+M = length(ha);
+
+switch dim
+    case 1
+        % Do nothing
+    case 2
+        ha = ha';
+        hb = hb';
+    case 3
+        ha = reshape(ha,1,1,[]);
+        hb = reshape(hb,1,1,[]);
+    case 4
+        ha = reshape(ha,1,1,1,[]);
+        hb = reshape(hb,1,1,1,[]);
+end
+
+szX = size(X); % X is 4-D array
+% Even and odd polyphase components of dual-tree filters
+haOdd = ha(1:2:end);
+haEven = ha(2:2:end);
+hbOdd = hb(1:2:end);
+hbEven = hb(2:2:end);
+
+od = szX(dim)/2;           % NOTE: operated dimension is halved
+szZ = szX; szZ(dim) = od;
+
+% Initialize
+Z = zeros(szZ,class(X));
+% Set up vector for indexing into the matrix
+skipInd = uint8(6:4:szX(dim)+2*M-2);
+extIdx = wextend('ac','sym',(uint8(1:szX(dim))),M);
+
+% Now perform the filtering
+if dot(ha,hb) > 0
+    s1 = uint8(1:2:od); % Odd values
+    s2 = s1 + 1; % Even values
+else
+    s2 = uint8(1:2:od); % Odd values
+    s1 = s2 + 1; % Even values
+end
+J = cell(1,4); J(:) = {':'};
+% Filter with hb
+% Create cell array where correct indices are placed on dim'th place
+Iodd = J;
+Ieven = J;
+Iodd{dim}   = extIdx(skipInd-1);
+Ieven{dim}  = extIdx(skipInd-3);
+J{dim}      = s1;
+
+Z(J{:}) = convn(X(Iodd{:}),hbOdd,'valid') ...
+    + convn(X(Ieven{:}),hbEven,'valid');
+
+% Filter with ha
+% Change the cell array accordingly
+Iodd{dim}   = extIdx(skipInd);
+Ieven{dim}  = extIdx(skipInd-2);
+J{dim}      = s2;
+
+Z(J{:}) = convn(X(Iodd{:}),haOdd,'valid') ...
+    + convn(X(Ieven{:}),haEven,'valid');
+end
+
+%------------------------------------------------------------------------
+function Z = OddEvenFilter4Dold(X,ha,hb,perm)
 % Dual filter scheme where the convolutions using filters ha and hb are
 % interlaced.
 % THIS FUNCTION HALVES THE SIZE OF THE CONVOLVED DIRECTION!
@@ -213,84 +297,76 @@ function A = level1NoHighpass(x,h0)
 % This function is called if the user specified "excludeL1"
 
 % Filter dimension 4
-perm = [4 2 3 1];
-x = oneDFilter(x,h0,perm);
+y = oneDFilter(x,h0,4);
 
 % Filter dimension 3
-perm = [3 2 1 4];
-x = oneDFilter(x,h0,perm);
+x = oneDFilter(y,h0,3);
 
 % Filter dimension 2
-perm = [2 1 3 4];
-x = oneDFilter(x,h0,perm);
+y = oneDFilter(x,h0,2);
 
 % Filter dimension 1
-perm = []; % Same as [1 2 3 4]
-A = oneDFilter(x,h0,perm);
+A = oneDFilter(y,h0,1);
 end
 
-%------------------------------------------------------------------------
+%-------------------------------------------------------------------------
 function [A,D] = level1Highpass(X,h0,h1)
 % This function computes first level wavelet coefficients
 
 sX = size(X);
-Y = zeros(2*sX,class(X));
 
 % Note this has been extended to be twice the original input size
-s1a = uint8(1:sX(1));
 s2a = uint8(1:sX(2));
 s3a = uint8(1:sX(3));
 s4a = uint8(1:sX(4));
 
-s1b = sX(1)+uint8(1:sX(1));
 s2b = sX(2)+uint8(1:sX(2));
 s3b = sX(3)+uint8(1:sX(3));
 s4b = sX(4)+uint8(1:sX(4));
 
-% Filter dimension 4
-perm = [4 2 3 1];
-Y(s1a,s2a,s3a,s4a) = oneDFilter(X,h0,perm); % Lowpass
-Y(s1a,s2a,s3a,s4b) = oneDFilter(X,h1,perm); % Highpass
-clear X
+% It is faster to work with two smaller arrays than one big array
 
-% Note the order of lowpass and highpass filters! Lowpass filtered part
-% replaces the original input so highpass needs to be used first!
+% Filter dimension 4
+Yl = oneDFilter(X,h0,4); % Lowpass
+Yh = oneDFilter(X,h1,4); % Highpass
+Y = cat(4,Yl,Yh);
 
 % Filter dimension 3
-perm = [3 2 1 4];
-Y(s1a,s2a,s3b,:) = oneDFilter(Y(s1a,s2a,s3a,:),h1,perm); % Highpass
-Y(s1a,s2a,s3a,:) = oneDFilter(Y(s1a,s2a,s3a,:),h0,perm); % Lowpass
+Xl = oneDFilter(Y,h0,3); % Lowpass
+Xh = oneDFilter(Y,h1,3); % Highpass
+X = cat(3,Xl,Xh);
 
 % Filter dimension 2
-perm = [2 1 3 4];
-Y(s1a,s2b,:,:) = oneDFilter(Y(s1a,s2a,:,:),h1,perm); % Highpass
-Y(s1a,s2a,:,:) = oneDFilter(Y(s1a,s2a,:,:),h0,perm); % Lowpass
+Yl = oneDFilter(X,h0,2); % Lowpass
+Yh = oneDFilter(X,h1,2); % Highpass
+Y = [Yl Yh];
 
 % Filter dimension 1
-perm = []; % Same as [1 2 3 4]
-Y(s1b,:,:,:) = oneDFilter(Y(s1a,:,:,:),h1,perm); % Highpass
-Y(s1a,:,:,:) = oneDFilter(Y(s1a,:,:,:),h0,perm); % Lowpass
+Xl = oneDFilter(Y,h0,1); % Lowpass
+Xh = oneDFilter(Y,h1,1); % Highpass
 
 % Note in listing the subbands the order is reversed compared to what was
 % done previously, i.e. 1st dimension, then 2nd, then 3rd and then 4th.
-A = Y(s1a,s2a,s3a,s4a);                                  % LLLL
+A = Xl(:,s2a,s3a,s4a);                  % LLLL
 % Form the eight complex wavelets for 4^2-1 = 15 subbands for a total of
 % 15*8 = 120 sets of coefficients per level.
-D = cat(5, cube2complex(Y(s1b,s2a,s3a,s4a)),...          % HLLL
-            cube2complex(Y(s1a,s2b,s3a,s4a)),...         % LHLL
-            cube2complex(Y(s1b,s2b,s3a,s4a)),...         % HHLL
-            cube2complex(Y(s1a,s2a,s3b,s4a)),...         % LLHL
-            cube2complex(Y(s1b,s2a,s3b,s4a)),...         % HLHL
-            cube2complex(Y(s1a,s2b,s3b,s4a)),...         % LHHL
-            cube2complex(Y(s1b,s2b,s3b,s4a)),...         % HHHL
-            cube2complex(Y(s1a,s2a,s3a,s4b)),...         % LLLH
-            cube2complex(Y(s1b,s2a,s3a,s4b)),...         % HLLH
-            cube2complex(Y(s1a,s2b,s3a,s4b)),...         % LHLH
-            cube2complex(Y(s1b,s2b,s3a,s4b)),...         % HHLH
-            cube2complex(Y(s1a,s2a,s3b,s4b)),...         % LLHH
-            cube2complex(Y(s1b,s2a,s3b,s4b)),...         % HLHH
-            cube2complex(Y(s1a,s2b,s3b,s4b)),...         % LHHH
-            cube2complex(Y(s1b,s2b,s3b,s4b)));           % HHHH
+Y1  = cube2complex(Xh(:,s2a,s3a,s4a));  % HLLL
+Y2  = cube2complex(Xl(:,s2b,s3a,s4a));  % LHLL
+Y3  = cube2complex(Xh(:,s2b,s3a,s4a));  % HHLL
+Y4  = cube2complex(Xl(:,s2a,s3b,s4a));  % LLHL
+Y5  = cube2complex(Xh(:,s2a,s3b,s4a));  % HLHL
+Y6  = cube2complex(Xl(:,s2b,s3b,s4a));  % LHHL
+Y7  = cube2complex(Xh(:,s2b,s3b,s4a));  % HHHL
+Y8  = cube2complex(Xl(:,s2a,s3a,s4b));  % LLLH
+Y9  = cube2complex(Xh(:,s2a,s3a,s4b));  % HLLH
+Y10 = cube2complex(Xl(:,s2b,s3a,s4b));  % LHLH
+Y11 = cube2complex(Xh(:,s2b,s3a,s4b));  % HHLH
+Y12 = cube2complex(Xl(:,s2a,s3b,s4b));  % LLHH
+Y13 = cube2complex(Xh(:,s2a,s3b,s4b));  % HLHH
+Y14 = cube2complex(Xl(:,s2b,s3b,s4b));  % LHHH
+Y15 = cube2complex(Xh(:,s2b,s3b,s4b));  % HHHH
+
+D = cat(5,Y1,Y2,Y3,Y4,Y5,Y6,Y7,Y8,Y9,Y10,Y11,Y12,Y13,Y14,Y15);          
 end
 
 %-------------------------------------------------------------------
@@ -387,23 +463,23 @@ Y = zeros(LLLLsize,class(X));
 
 % Filter dimension 4
 perm = [4 2 3 1];
-Y(:,:,:,s4b) = OddEvenFilter4D(X,h1a,h1b,perm); % Highpass
-Y(:,:,:,s4a) = OddEvenFilter4D(X,h0a,h0b,perm); % Lowpass
+Y(:,:,:,s4b) = OddEvenFilter4D(X,h1a,h1b,4); % Highpass
+Y(:,:,:,s4a) = OddEvenFilter4D(X,h0a,h0b,4); % Lowpass
 
 % Filter dimension 3
 perm = [3 2 1 4];
-X(:,:,s3b,:) = OddEvenFilter4D(Y,h1a,h1b,perm); % Highpass
-X(:,:,s3a,:) = OddEvenFilter4D(Y,h0a,h0b,perm); % Lowpass
+X(:,:,s3b,:) = OddEvenFilter4D(Y,h1a,h1b,3); % Highpass
+X(:,:,s3a,:) = OddEvenFilter4D(Y,h0a,h0b,3); % Lowpass
 
 % Filter dimension 2
 perm = [2 1 3 4];
-Y(:,s2b,:,:) = OddEvenFilter4D(X,h1a,h1b,perm); % Highpass
-Y(:,s2a,:,:) = OddEvenFilter4D(X,h0a,h0b,perm); % Lowpass
+Y(:,s2b,:,:) = OddEvenFilter4D(X,h1a,h1b,2); % Highpass
+Y(:,s2a,:,:) = OddEvenFilter4D(X,h0a,h0b,2); % Lowpass
 
 % Filter dimension 1
 perm = []; % Same as [1 2 3 4]
-X(s1b,:,:,:) = OddEvenFilter4D(Y,h1a,h1b,perm); % Highpass
-X(s1a,:,:,:) = OddEvenFilter4D(Y,h0a,h0b,perm); % Lowpass
+X(s1b,:,:,:) = OddEvenFilter4D(Y,h1a,h1b,1); % Highpass
+X(s1a,:,:,:) = OddEvenFilter4D(Y,h0a,h0b,1); % Lowpass
 
 % Form the eight complex wavelets for 4^2-1 = 15 subbands for a total of
 % 15*8 = 120 sets of coefficients per level.
