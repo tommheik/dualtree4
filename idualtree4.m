@@ -20,7 +20,7 @@ function rec = idualtree4(A, D, varargin)
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 15.5.2020
-%   Last edited 29.3.2021
+%   Last edited 7.5.2021
 
 % Check whether approximation coefficients are stored in real or complex 
 % valued format.
@@ -109,20 +109,18 @@ g1b = g1a(end:-1:1);
 % Debug cleanup
 clear Hi* Lo*
 
-if level>=2
-    while level > 1             % Go through levels in decreasing order
-        if ~isempty(D{level-1}) % Get the desired size from lower level
-            syh = size(D{level-1});
-            prev_level_size = syh(1:4);
-        else
-            syh = size(D{level});
-            prev_level_size = syh(1:4).*2;
-        end
-        % Obtain scaling coefficients through synthesis
-        A = level2synthesis(A,D{level},g0a,g0b,g1a,g1b,prev_level_size);
-        D{level} = [];   % Clear used detail coefficients to save memory.
-        level = level-1;
+while level > 1             % Go through levels in decreasing order
+    if ~isempty(D{level-1}) % Get the desired size from lower level
+        syh = size(D{level-1});
+        prev_level_size = syh(1:4);
+    else
+        syh = size(D{level});
+        prev_level_size = syh(1:4).*2;
     end
+    % Obtain scaling coefficients through synthesis
+    A = level2synthesis(A,D{level},g0a,g0b,g1a,g1b,prev_level_size);
+    D{level} = [];   % Clear used detail coefficients to save memory.
+    level = level-1;
 end
 
 % Special case where 1st level details were excluded
@@ -136,7 +134,100 @@ end
 end
 
 %------------------------------------------------------------------------
-function Y = invOddEvenFilter(X,ha,hb,perm)
+function Y = invOddEvenFilter(X,ha,hb,dim)
+% Convolve one dimension of X using both filters. Interlace the values to
+% double the length of the convolved direction.
+
+% Case filters to column vectors
+ha = ha(:);
+hb = hb(:);
+M = length(ha);
+% The following will only work with even length filters
+L = fix(M/2);
+
+% permute filters
+switch dim
+    case 1
+        % Do nothing
+    case 2
+        ha = ha';
+        hb = hb';
+    case 3
+        ha = reshape(ha,1,1,[]);
+        hb = reshape(hb,1,1,[]);
+    case 4
+        ha = reshape(ha,1,1,1,[]);
+        hb = reshape(hb,1,1,1,[]);
+end
+
+szX = size(X); % Input size
+
+od = 2*szX(dim); % Operated dimension is doubled
+szY = szX; szY(dim) = od;
+Y = zeros(szY,class(X));
+
+extIdx = wextend('ac','sym',(uint8(1:szX(dim))),L);
+% Polyphase components of the filters
+haOdd = ha(1:2:M);
+haEven = ha(2:2:M);
+hbOdd = hb(1:2:M);
+hbEven = hb(2:2:M);
+
+s = uint8(1:4:od); % Interlacing indicies
+
+t = uint8(4:2:(szX(dim)+M)); % matIdx indicies
+if dot(ha,hb) > 0
+    ta = t; tb = t - 1;
+else
+    ta = t - 1; tb = t;
+end
+% Cell array to operate correct dimension
+Ja = cell(1,4); Ja(:) = {':'};
+Jb = Ja;
+% Create cell arrays where correct indices are placed on dim'th place
+Ia = Ja;
+Ib = Ja;
+
+if rem(L,2) == 1    % L is odd 
+    ta = ta - 1; % Shited one to the left
+    tb = tb - 1; % Shited one to the left
+    
+    % Switch "odd" and "even" polyphase filters around. Easiest way is to
+    % use incorrect filter names!!!
+    % Redo polyphase components of the filters
+    haOdd = ha(2:2:M);
+    haEven = ha(1:2:M);
+    hbOdd = hb(2:2:M);
+    hbEven = hb(1:2:M);
+    
+    % No need to shift ta and tb for "even" filters
+    Ia{dim} = extIdx(ta);
+    Ib{dim} = extIdx(tb);
+else
+    % ta and tb need to be shifted for "even" filters
+    Ia{dim} = extIdx(ta-2);
+    Ib{dim} = extIdx(tb-2);
+end
+
+% Even filter values
+Ja{dim} = s+1;
+Jb{dim} = s;
+% Convolve
+Y(Ja{:}) = convn(X(Ia{:}),haEven,'valid');
+Y(Jb{:}) = convn(X(Ib{:}),hbEven,'valid');
+
+% Odd filter values
+Ja{dim} = s+3;
+Jb{dim} = s+2;
+Ia{dim} = extIdx(ta);
+Ib{dim} = extIdx(tb);
+% Convolve
+Y(Ja{:}) = convn(X(Ia{:}),haOdd,'valid');
+Y(Jb{:}) = convn(X(Ib{:}),hbOdd,'valid');
+end
+
+%------------------------------------------------------------------------
+function Y = invOddEvenFilterOld(X,ha,hb,perm)
 % Convolve one dimension of X using both filters. Interlace the values to
 % double the length of the convolved direction.
 
@@ -188,36 +279,42 @@ if ~isempty(perm); Y = ipermute(Y,perm); end
 end
 
 %-------------------------------------------------------------------------
-function Y = complex2cube(Z)
+function Z = complex2cube(Z)
 % Reorganize the complex valued array into interlaced real valued array of
 % twice the size.
+
+global useAdj % Normalization differs for inverse and adjoint
+if ~useAdj
+    % Each orthant was divided by 2 in analysis, 8*1/2 = 4 hence 
+    c = 0.25;
+else
+    % Adjoint must use same multiplier as analysis!
+    c = 0.5;
+end
 
 sZ = size(Z);
 % Split the array into real and imaginary parts of the 8 orthants
 % Real parts
-O1r = real(Z(:,:,:,:,1));
-O2r = real(Z(:,:,:,:,2));
-O3r = real(Z(:,:,:,:,3));
-O4r = real(Z(:,:,:,:,4));
-O5r = real(Z(:,:,:,:,5));
-O6r = real(Z(:,:,:,:,6));
-O7r = real(Z(:,:,:,:,7));
-O8r = real(Z(:,:,:,:,8));
+O1r = c*real(Z(:,:,:,:,1));
+O2r = c*real(Z(:,:,:,:,2));
+O3r = c*real(Z(:,:,:,:,3));
+O4r = c*real(Z(:,:,:,:,4));
+O5r = c*real(Z(:,:,:,:,5));
+O6r = c*real(Z(:,:,:,:,6));
+O7r = c*real(Z(:,:,:,:,7));
+O8r = c*real(Z(:,:,:,:,8));
 % Imaginary parts
-O1i = imag(Z(:,:,:,:,1));
-O2i = imag(Z(:,:,:,:,2));
-O3i = imag(Z(:,:,:,:,3));
-O4i = imag(Z(:,:,:,:,4));
-O5i = imag(Z(:,:,:,:,5));
-O6i = imag(Z(:,:,:,:,6));
-O7i = imag(Z(:,:,:,:,7));
-O8i = imag(Z(:,:,:,:,8));
-
-% Save memory
-clear Z
+O1i = c*imag(Z(:,:,:,:,1));
+O2i = c*imag(Z(:,:,:,:,2));
+O3i = c*imag(Z(:,:,:,:,3));
+O4i = c*imag(Z(:,:,:,:,4));
+O5i = c*imag(Z(:,:,:,:,5));
+O6i = c*imag(Z(:,:,:,:,6));
+O7i = c*imag(Z(:,:,:,:,7));
+O8i = c*imag(Z(:,:,:,:,8));
 
 % Allocate array for result
-Y = zeros(2*sZ(1:4),class(O1r));
+Z = zeros(2*sZ(1:4),class(O1r));
 
 % Each orthant O_k is built from 8 functions Psi_l, 4 for real part and 4
 % for imaginary. The sign of these functions is based on the tree-like
@@ -227,33 +324,24 @@ Y = zeros(2*sZ(1:4),class(O1r));
 % cancel out.
 
 % Combine real parts
-Y(2:2:end,2:2:end,2:2:end,2:2:end) = +O1r+O2r+O3r+O4r+O5r+O6r+O7r+O8r; % Paaaa
-Y(2:2:end,2:2:end,1:2:end,1:2:end) = -O1r-O2r-O3r-O4r+O5r+O6r+O7r+O8r; % Paabb
-Y(2:2:end,1:2:end,2:2:end,1:2:end) = -O1r-O2r+O3r+O4r-O5r-O6r+O7r+O8r; % Pabab
-Y(2:2:end,1:2:end,1:2:end,2:2:end) = -O1r-O2r+O3r+O4r+O5r+O6r-O7r-O8r; % Pabba
-Y(1:2:end,2:2:end,2:2:end,1:2:end) = -O1r+O2r-O3r+O4r-O5r+O6r-O7r+O8r; % Pbaab
-Y(1:2:end,2:2:end,1:2:end,2:2:end) = -O1r+O2r-O3r+O4r+O5r-O6r+O7r-O8r; % Pbaba
-Y(1:2:end,1:2:end,2:2:end,2:2:end) = -O1r+O2r+O3r-O4r-O5r+O6r+O7r-O8r; % Pbbaa
-Y(1:2:end,1:2:end,1:2:end,1:2:end) = +O1r-O2r-O3r+O4r-O5r+O6r+O7r-O8r; % Pbbbb
+Z(2:2:end,2:2:end,2:2:end,2:2:end) = +O1r+O2r+O3r+O4r+O5r+O6r+O7r+O8r; % Paaaa
+Z(2:2:end,2:2:end,1:2:end,1:2:end) = -O1r-O2r-O3r-O4r+O5r+O6r+O7r+O8r; % Paabb
+Z(2:2:end,1:2:end,2:2:end,1:2:end) = -O1r-O2r+O3r+O4r-O5r-O6r+O7r+O8r; % Pabab
+Z(2:2:end,1:2:end,1:2:end,2:2:end) = -O1r-O2r+O3r+O4r+O5r+O6r-O7r-O8r; % Pabba
+Z(1:2:end,2:2:end,2:2:end,1:2:end) = -O1r+O2r-O3r+O4r-O5r+O6r-O7r+O8r; % Pbaab
+Z(1:2:end,2:2:end,1:2:end,2:2:end) = -O1r+O2r-O3r+O4r+O5r-O6r+O7r-O8r; % Pbaba
+Z(1:2:end,1:2:end,2:2:end,2:2:end) = -O1r+O2r+O3r-O4r-O5r+O6r+O7r-O8r; % Pbbaa
+Z(1:2:end,1:2:end,1:2:end,1:2:end) = +O1r-O2r-O3r+O4r-O5r+O6r+O7r-O8r; % Pbbbb
 
 % Combine imaginary parts
-Y(2:2:end,2:2:end,2:2:end,1:2:end) = +O1i+O2i+O3i+O4i+O5i+O6i+O7i+O8i; % Paaab
-Y(2:2:end,2:2:end,1:2:end,2:2:end) = +O1i+O2i+O3i+O4i-O5i-O6i-O7i-O8i; % Paaba
-Y(2:2:end,1:2:end,2:2:end,2:2:end) = +O1i+O2i-O3i-O4i+O5i+O6i-O7i-O8i; % Pabaa
-Y(2:2:end,1:2:end,1:2:end,1:2:end) = -O1i-O2i+O3i+O4i+O5i+O6i-O7i-O8i; % Pabbb
-Y(1:2:end,2:2:end,2:2:end,2:2:end) = +O1i-O2i+O3i-O4i+O5i-O6i+O7i-O8i; % Pbaaa
-Y(1:2:end,2:2:end,1:2:end,1:2:end) = -O1i+O2i-O3i+O4i+O5i-O6i+O7i-O8i; % Pbabb
-Y(1:2:end,1:2:end,2:2:end,1:2:end) = -O1i+O2i+O3i-O4i-O5i+O6i+O7i-O8i; % Pbbab
-Y(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i; % Pbbba
-
-global useAdj % Normalization differs for inverse and adjoint
-if ~useAdj
-    % Each orthant was divided by 2 in analysis, 8*1/2 = 4 hence 
-    Y = 0.25*Y;
-else
-    % Adjoint must use same multiplier as analysis!
-    Y = 0.5*Y;
-end
+Z(2:2:end,2:2:end,2:2:end,1:2:end) = +O1i+O2i+O3i+O4i+O5i+O6i+O7i+O8i; % Paaab
+Z(2:2:end,2:2:end,1:2:end,2:2:end) = +O1i+O2i+O3i+O4i-O5i-O6i-O7i-O8i; % Paaba
+Z(2:2:end,1:2:end,2:2:end,2:2:end) = +O1i+O2i-O3i-O4i+O5i+O6i-O7i-O8i; % Pabaa
+Z(2:2:end,1:2:end,1:2:end,1:2:end) = -O1i-O2i+O3i+O4i+O5i+O6i-O7i-O8i; % Pabbb
+Z(1:2:end,2:2:end,2:2:end,2:2:end) = +O1i-O2i+O3i-O4i+O5i-O6i+O7i-O8i; % Pbaaa
+Z(1:2:end,2:2:end,1:2:end,1:2:end) = -O1i+O2i-O3i+O4i+O5i-O6i+O7i-O8i; % Pbabb
+Z(1:2:end,1:2:end,2:2:end,1:2:end) = -O1i+O2i+O3i-O4i-O5i+O6i+O7i-O8i; % Pbbab
+Z(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i; % Pbbba
 end
 
 %-------------------------------------------------------------------------
@@ -261,72 +349,68 @@ function Y = level2synthesis(Yl,Yh,g0a,g0b,g1a,g1b,prev_level_size)
 % From this we will only return the scaling coefficients at the next finer
 % resolution level
 LLLLsize = size(Yl);
-if isa(Yl,'single') || isa(Yh,'single')
-    Yl = single(Yl);
-    Yh = single(Yh);
-    Y = zeros(2*LLLLsize,'single');
-else
-    Y = zeros(2*LLLLsize);
-end
-sY = size(Y);
+% It's faster to work with two smaller arrays
+Y1 = zeros([LLLLsize(1),2*LLLLsize(2:end)],class(Yh));
+Y2 = Y1;
+sY = size(Y1);
 
-s1a = uint8(1:sY(1)/2);
 s2a = uint8(1:sY(2)/2);
 s3a = uint8(1:sY(3)/2);
 s4a = uint8(1:sY(4)/2);
-s1b = s1a+uint8(sY(1)/2);
 s2b = s2a+uint8(sY(2)/2);
 s3b = s3a+uint8(sY(3)/2);
 s4b = s4a+uint8(sY(4)/2);
 
 % Fill y array for synthesis
-Y(s1a,s2a,s3a,s4a) = Yl;
-clear yl
+Y1(:,s2a,s3a,s4a) = Yl;
+
 % There are 120 directions, 8 for each of the 15 filter setups
 ind = reshape(uint8(1:120), [8,15]).'; % Helpful index matrix
 
-Y(s1b,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
-Y(s1a,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
-Y(s1b,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
-Y(s1a,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
-Y(s1b,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
-Y(s1a,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
-Y(s1b,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
-Y(s1a,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
-Y(s1b,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
-Y(s1a,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
-Y(s1b,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
-Y(s1a,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
-Y(s1b,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
-Y(s1a,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
-Y(s1b,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
+Y2(:,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
+Y1(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
+Y2(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
+Y1(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
+Y2(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
+Y1(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
+Y2(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
+Y1(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
+Y2(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
+Y1(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
+Y2(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
+Y1(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
+Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
+Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
+Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
 
-% yh no longer needed so clear it to save memory!
 size_curr_level = size(Yh);
 size_curr_level = size_curr_level(1:4);
-clear yh
 
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
 
 % Filter dimension 1
 perm = []; % Same as [1 2 3 4]
-Y = invOddEvenFilter(Y(s1a,:,:,:),g0a,g0b,perm) + ... % Lowpass
-    invOddEvenFilter(Y(s1b,:,:,:),g1a,g1b,perm);      % Highpass
+Yl = invOddEvenFilter(Y1,g0a,g0b,1);  % Lowpass
+Yh = invOddEvenFilter(Y2,g1a,g1b,1);  % Highpass
+Y = Yl + Yh;
 
 % Filter dimension 2
 perm = [2 1 3 4];
-Y = invOddEvenFilter(Y(:,s2a,:,:),g0a,g0b,perm) + ... % Lowpass
-    invOddEvenFilter(Y(:,s2b,:,:),g1a,g1b,perm);      % Highpass
+Yl = invOddEvenFilter(Y(:,s2a,:,:),g0a,g0b,2); % Lowpass
+Yh = invOddEvenFilter(Y(:,s2b,:,:),g1a,g1b,2); % Highpass
+Y = Yl + Yh;
 
 % Filter dimension 3
 perm = [3 2 1 4];
-Y = invOddEvenFilter(Y(:,:,s3a,:),g0a,g0b,perm) + ... % Lowpass
-    invOddEvenFilter(Y(:,:,s3b,:),g1a,g1b,perm);      % Highpass
+Yl = invOddEvenFilter(Y(:,:,s3a,:),g0a,g0b,3); % Lowpass
+Yh = invOddEvenFilter(Y(:,:,s3b,:),g1a,g1b,3); % Highpass
+Y = Yl + Yh;
 
 % Filter dimension 4
 perm = [4 2 3 1];
-Y = invOddEvenFilter(Y(:,:,:,s4a),g0a,g0b,perm) + ... % Lowpass
-    invOddEvenFilter(Y(:,:,:,s4b),g1a,g1b,perm);      % Highpass
+Yl = invOddEvenFilter(Y(:,:,:,s4a),g0a,g0b,4); % Lowpass
+Yh = invOddEvenFilter(Y(:,:,:,s4b),g1a,g1b,4); % Highpass
+Y = Yl + Yh;
 
 % Now check if the size of the previous level is exactly twice the size
 % of the current level. If it is exactly twice the size, the data was not
@@ -352,34 +436,44 @@ end
 end
 
 %------------------------------------------------------------------------
-function Y = oneDFilter(X,h,perm)
+function X = oneDFilter(X,h,dim)
 % Filter one dimension of X with h, where h is a column vector. The output
 % is NOT downsampled
 
-% Permute X so that the first dimension is convolved
-if ~isempty(perm); X = permute(X,perm); end
-    
 % Determine symmetric extension amount
 h = h(:);
 lh = length(h);
 a = fix(lh/2);
 
-% Extend X and convolve
-X = wextend4D(X,a);
-Y = convn(X,h,'valid');
-clear X
+% Permute h so that it is "dim-dimensional" vector
+switch dim
+    case 1
+        % Do nothing
+    case 2
+        h = h';
+    case 3
+        h = reshape(h,1,1,[]);
+    case 4
+        h = reshape(h,1,1,1,[]);
+end
 
-% Revert permutation
-if ~isempty(perm); Y = ipermute(Y,perm); end
+% Extend X and convolve
+Y = wextend4D(X,a,dim);
+X = convn(Y,h,'valid');
+
 end
 
 %------------------------------------------------------------------------
-function X = wextend4D(X,a)
+function Y = wextend4D(X,a,dim)
 % 4D version of wextend using symmetric half-point extension on rows
-lx = size(X,1);
+lx = size(X,dim);
 % We get the indicies from the original wextend
-I = wextend('ac','sym',1:lx,a);
-X = X(I,:,:,:);
+i = wextend('ac','sym',1:lx,a);
+% Create cell array where i is placed on dim'th place
+I = cell(1,4); I(:) = {':'};
+I{dim} = i;
+% Extend dim'th direction using i
+Y = X(I{:});
 end
 
 %------------------------------------------------------------------------
@@ -390,19 +484,19 @@ function Y = level1SynthNoHighpass(Y,g0,orgSize)
 
 % Filter dimension 1
 perm = []; % Same as [1 2 3 4]
-Y = oneDFilter(Y,g0,perm);
+Y = oneDFilter(Y,g0,1);
 
 % Filter dimension 2
 perm = [2 1 3 4];
-Y = oneDFilter(Y,g0,perm);
+Y = oneDFilter(Y,g0,2);
 
 % Filter dimension 3
 perm = [3 2 1 4];
-Y = oneDFilter(Y,g0,perm);
+Y = oneDFilter(Y,g0,3);
 
 % Filter dimension 4
 perm = [4 2 3 1];
-Y = oneDFilter(Y,g0,perm);
+Y = oneDFilter(Y,g0,4);
 
 % If the user specifies "excludeL1" at the input, it is possible that
 % the output data size may not be correct. To correct for that, the user
@@ -431,67 +525,59 @@ function Y = level1SynthHighpass(Yl,Yh,g0,g1)
 % Finest level synthesis using all coefficients.
 
 LLLLsize = size(Yl);
-if isa(Yl,'single') || isa(Yh,'single')
-    Yl = single(Yl);
-    Yh = single(Yh);
-    Y = zeros(2*LLLLsize,'single');
-else
-    Y = zeros(2*LLLLsize);
-end
+% It's faster to work with two smaller arrays
+Y1 = zeros([LLLLsize(1),2*LLLLsize(2:end)],class(Yh));
+Y2 = Y1;
 
-s1a = uint8(1:LLLLsize(1));
 s2a = uint8(1:LLLLsize(2));
 s3a = uint8(1:LLLLsize(3));
 s4a = uint8(1:LLLLsize(4));
-s1b = s1a+LLLLsize(1);
 s2b = s2a+LLLLsize(2);
 s3b = s3a+LLLLsize(3);
 s4b = s4a+LLLLsize(4);
 
 % Fill y array for synthesis
-Y(s1a,s2a,s3a,s4a) = Yl;
-clear Yl
+Y1(:,s2a,s3a,s4a) = Yl;
 % There are 120 directions, 8 for each of the 15 filter setups
 ind = reshape(uint8(1:120), [8,15]).'; % Helpful index matrix
 
-Y(s1b,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
-Y(s1a,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
-Y(s1b,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
-Y(s1a,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
-Y(s1b,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
-Y(s1a,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
-Y(s1b,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
-Y(s1a,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
-Y(s1b,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
-Y(s1a,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
-Y(s1b,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
-Y(s1a,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
-Y(s1b,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
-Y(s1a,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
-Y(s1b,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
-clear yh
+Y2(:,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
+Y1(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
+Y2(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
+Y1(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
+Y2(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
+Y1(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
+Y2(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
+Y1(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
+Y2(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
+Y1(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
+Y2(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
+Y1(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
+Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
+Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
+Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
 
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
-% Notice that the size of Y is halved at every step in the respective
+% Notice that the size of Y# is halved at every step in the respective
 % direction/dimension.
 
 % Filter dimension 1
-perm = []; % Same as [1 2 3 4]
-Y = oneDFilter(Y(s1a,:,:,:),g0,perm) + ... % Lowpass
-    oneDFilter(Y(s1b,:,:,:),g1,perm);      % Highpass
+Yl = oneDFilter(Y1,g0,1);      % Lowpass
+Yh = oneDFilter(Y2,g1,1);      % Highpass
+Y = Yl + Yh;
 
 % Filter dimension 2
-perm = [2 1 3 4];
-Y = oneDFilter(Y(:,s2a,:,:),g0,perm) + ... % Lowpass
-    oneDFilter(Y(:,s2b,:,:),g1,perm);      % Highpass
+Yl = oneDFilter(Y(:,s2a,:,:),g0,2);      % Lowpass
+Yh = oneDFilter(Y(:,s2b,:,:),g1,2);      % Highpass
+Y = Yl + Yh;
 
 % Filter dimension 3
-perm = [3 2 1 4];
-Y = oneDFilter(Y(:,:,s3a,:),g0,perm) + ... % Lowpass
-    oneDFilter(Y(:,:,s3b,:),g1,perm);      % Highpass
+Yl = oneDFilter(Y(:,:,s3a,:),g0,3);      % Lowpass
+Yh = oneDFilter(Y(:,:,s3b,:),g1,3);      % Highpass
+Y = Yl + Yh;
 
 % Filter dimension 4
-perm = [4 2 3 1];
-Y = oneDFilter(Y(:,:,:,s4a),g0,perm) + ... % Lowpass
-    oneDFilter(Y(:,:,:,s4b),g1,perm);      % Highpass
+Yl = oneDFilter(Y(:,:,:,s4a),g0,4);     % Lowpass
+Yh = oneDFilter(Y(:,:,:,s4b),g1,4);     % Highpass
+Y = Yl + Yh;
 end

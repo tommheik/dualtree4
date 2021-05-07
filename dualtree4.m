@@ -30,7 +30,7 @@ function [A, D] = dualtree4(f, level, varargin)
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 12.5.2020
-%   Last edited 29.3.2021
+%   Last edited 7.5.2021
 
 % Ensure the input is numeric, real, and that it is four-dimensional
 validateattributes(f,{'numeric'},{'real','nonempty','finite','ndims',4},...
@@ -188,6 +188,7 @@ ha = ha(:);
 hb = hb(:);
 M = length(ha);
 
+% permute filters
 switch dim
     case 1
         % Do nothing
@@ -246,50 +247,6 @@ J{dim}      = s2;
 
 Z(J{:}) = convn(X(Iodd{:}),haOdd,'valid') ...
     + convn(X(Ieven{:}),haEven,'valid');
-end
-
-%------------------------------------------------------------------------
-function Z = OddEvenFilter4Dold(X,ha,hb,perm)
-% Dual filter scheme where the convolutions using filters ha and hb are
-% interlaced.
-% THIS FUNCTION HALVES THE SIZE OF THE CONVOLVED DIRECTION!
-% This is because the input for level 2 and up has NOT been downsampled
-% yet and hence it is twice the size it should be.
-
-% Permute X so that the first dimension is convolved
-if ~isempty(perm); X = permute(X,perm); end
-
-% ha and hb are identical length (even) filters
-[r,c,t,s] = size(X); % X is 4-D array
-% Even and odd polyphase components of dual-tree filters
-haOdd = ha(1:2:end);
-haEven = ha(2:2:end);
-hbOdd = hb(1:2:end);
-hbEven = hb(2:2:end);
-r2 = r/2;           % NOTE: THE NUMBER OF ROWS IS HALVED!
-Z = zeros(r2,c,t,s,class(X));
-M = length(ha);
-% Set up vector for indexing into the matrix
-idx = uint8(6:4:r+2*M-2);
-matIdx = wextend('ar','sym',(uint8(1:r))',M);
-
-% Now perform the filtering
-if dot(ha,hb) > 0
-    s1 = uint8(1:2:r2); % Odd values
-    s2 = s1 + 1; % Even values
-else
-    s2 = uint8(1:2:r2); % Odd values
-    s1 = s2 + 1; % Even values
-end
-% Filter with hb
-Z(s1,:,:,:) = convn(X(matIdx(idx-1),:,:,:),hbOdd(:),'valid') ...
-    + convn(X(matIdx(idx-3),:,:,:),hbEven(:),'valid');
-% Filter with ha
-Z(s2,:,:,:) = convn(X(matIdx(idx),:,:,:),haOdd(:),'valid') ...
-    + convn(X(matIdx(idx-2),:,:,:),haEven(:),'valid');
-clear X
-% Revert permutation
-if ~isempty(perm); Z = ipermute(Z,perm); end
 end
 
 %-------------------------------------------------------------------------
