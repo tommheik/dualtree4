@@ -20,7 +20,7 @@ function rec = idualtree4(A, D, varargin)
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 15.5.2020
-%   Last edited 7.5.2021
+%   Last edited 11.6.2021
 
 % Check whether approximation coefficients are stored in real or complex 
 % valued format.
@@ -224,58 +224,6 @@ Ib{dim} = extIdx(tb);
 % Convolve
 Y(Ja{:}) = convn(X(Ia{:}),haOdd,'valid');
 Y(Jb{:}) = convn(X(Ib{:}),hbOdd,'valid');
-end
-
-%------------------------------------------------------------------------
-function Y = invOddEvenFilterOld(X,ha,hb,perm)
-% Convolve one dimension of X using both filters. Interlace the values to
-% double the length of the convolved direction.
-
-% Permute X so that the first dimension is convolved
-if ~isempty(perm); X = permute(X,perm); end
-
-[r,c,s,t] = size(X); % Rows, Columns, Slices, Time steps
-Y = zeros(2*r,c,s,t,class(X));
-
-filtlen = length(ha);
-% The following will only work with even length filters
-L = fix(filtlen/2);
-matIdx = wextend('ar','sym',(uint8(1:r))',L);
-% Polyphase components of the filters
-haOdd = ha(1:2:filtlen);
-haEven = ha(2:2:filtlen);
-hbOdd = hb(1:2:filtlen);
-hbEven = hb(2:2:filtlen);
-
-s = uint8(1:4:(r*2)); % Interlacing indicies
-
-t = uint8(4:2:(r+filtlen)); % matIdx indicies
-if dot(ha,hb) > 0
-    ta = t; tb = t - 1;
-else
-    ta = t - 1; tb = t;
-end
-if rem(L,2) == 0    % L is even  
-    
-    % Convolve
-    Y(s,:,:,:)   = convn(X(matIdx(tb-2),:,:,:),hbEven(:),'valid');
-    Y(s+1,:,:,:) = convn(X(matIdx(ta-2),:,:,:),haEven(:),'valid');
-    Y(s+2,:,:,:) = convn(X(matIdx(tb),:,:,:),hbOdd(:),'valid');
-    Y(s+3,:,:,:) = convn(X(matIdx(ta),:,:,:),haOdd(:),'valid'); 
-    
-else % L is odd
-    
-    ta = ta - 1; % Shited one to the left
-    tb = tb - 1; % Shited one to the left
-    
-    % Convolve (note the different order!)
-    Y(s,:,:,:)   = convn(X(matIdx(tb),:,:,:),hbOdd(:),'valid');
-    Y(s+1,:,:,:) = convn(X(matIdx(ta),:,:,:),haOdd(:),'valid');
-    Y(s+2,:,:,:) = convn(X(matIdx(tb),:,:,:),hbEven(:),'valid');
-    Y(s+3,:,:,:) = convn(X(matIdx(ta),:,:,:),haEven(:),'valid');
-end
-% Revert permutation
-if ~isempty(perm); Y = ipermute(Y,perm); end
 end
 
 %-------------------------------------------------------------------------
