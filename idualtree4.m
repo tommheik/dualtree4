@@ -5,22 +5,42 @@ function rec = idualtree4(A, D, varargin)
 %   cell array of wavelet coefficients, D. A and D are outputs of
 %   DUALTREE4.
 %
-%   REC = IDUALTREE4(A,D,orgSize) computes the final synthesis so that the
-%   size of REC matches the size of the original object (orgSize). This is
-%   sometimes needed if the 1st level detail coefficients were excluded
-%   during analysis ([A,D] = DUALTREE4(...,"ExcludeL1")).
+%   Optional input arguments:
+%   Case insensitive, string or char, any order.
 %
-%   ADJ = IDUALTREE4(A,D,"adjoint") approximates the adjoint operator of the
-%   forward transform. For adjoint the 1st level decomposition filters need 
-%   to be changed and a normalization identical to the analysis (DUALTREE4)
-%   needs to be used.
+%   NOTE: If the filter type or length used for decomposition is
+%   non-default, same filter type / length need to be used for inverse or
+%   adjoint as well!
+%
+%   {"LevelOneFilter", "L1F"}, {"nearsym5_7", "nearsym13_19", "antonini",
+%   OR "legall"}
+%       Key-value pair to determine which biorthogonal wavelets are used
+%       for the first decomposition level. Defaults to "nearsym5_7".
+%       Example: dualtree4(x,3,'l1f', 'antonini')
+%
+%   {"FilterLength", "FL", "Length", "Qshift"}, {6, 10, 14, 16 OR 18}
+%       Length of the Kingsbury Qshift filters used for decomposition level
+%       2 onwards. Length has to be a numerical value. Defaults to 10.
+%       Example: dualtree4(x, 3, 'fl', 16);
+%
+%   REC = IDUALTREE4(A,D,orgSize), orgSize = [x, y, z, t] vector
+%       computes the final synthesis so that the size of REC matches the
+%       size of the original object (orgSize). This is sometimes needed if
+%       the 1st level detail coefficients were excluded during analysis
+%       ([A,D] = DUALTREE4(...,"ExcludeL1")).
+%
+%   {"Adjoint", "adj"}
+%       Approximate adjoint operator of the forward transform. Enabling
+%       this option changes the 1st level reconstruction filters (to
+%       decomposition filters because that wavelet system is biorthogonal)
+%       and the normalization term for all decomposition levels.
 %
 %   This code is heavily based on the IDUALTREE3-function.
 %
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 15.5.2020
-%   Last edited 11.6.2021
+%   Last edited 28.6.2021
 
 % Check whether approximation coefficients are stored in real or complex 
 % valued format.
@@ -43,36 +63,69 @@ level = length(D);
 % Use double precision if needed
 useDouble = isa(A, 'double');
 
-% Check for 'adjoint' or "adjoint"
-validopts = ["adjoint","inverse"];
-defaultopt = "inverse";
-global useAdj % Simpler to pass to other functions this way
-[useAdj, varargin] = ...
-    wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
-useAdj = strcmpi(useAdj,"adjoint"); % Use a simple boolean value
+% Initialize (with defaults)
+L1F = 'nearsym5_7'; % Level 1 filter type
+Flen = 10;          % Qshift filter length
+uAdj = false;       % Inverse or adjoint operator
+orgSize = [];
 
-% If original object size is not given, it is set to empty array.
-if isempty(varargin)
-    orgSize = [];
-else
-    orgSize = varargin{1};
+% Go through optional input arugments (twice)
+% Look for orgSize argument:
+for narg = 1:length(varargin)
+    varg = varargin{narg};
+    % orgSize must be 4-long positive vector with integer values
+    if isvector(varg) && length(varg) == 4 && all(varg > 0) && all(varg == round(varg))
+        orgSize = varg; % Save orgSize parameter
+        varargin(narg) = []; % Remove input from list
+        break; % Stop search
+    end
+end
+% Go through other ipnut arguments
+narg = 1;
+while narg <= length(varargin)
+    varg = lower(varargin{narg});
+    if ~ischar(varg) || ~isstring(varg) || ~isscalar(varg)
+        error('Unsuitable optional input argument for position %d', narg)
+    end
+    switch varg
+        %%% Single keyword parameter %%%
+        case {'adjoint', 'adj', 't', 'inverse', 'inv'}
+            % Check for 'adjoint', 'adj' or 'T' if the adjoint operator is
+            % wanted instead of inverse
+            uAdj = any(strcmpi(varg,{'adjoint','adj','t'}));
+            
+        %%% Keyword-value pairs
+        case {'levelonefilter', 'l1f'}
+            % First level biorthogonal filter type
+            if any(strcmpi(varargin{narg+1}, {'nearsym5_7', 'nearsym13_19', 'antonini', 'legall'}))
+                L1F = varargin{narg+1};
+                narg = narg + 1; % Skip 'narg + 1'th input
+            else
+                error('Unsuitable first level filter: %s', varargin{narg+1});
+            end
+            
+        case {'filterlength', 'fl', 'length', 'qshift'}
+            if any(varargin{narg+1} == [6,10,14,16,18])
+                Flen = varargin{narg+1};
+                narg = narg + 1; % Skip 'narg + 1'th input
+            else
+                error('Unsuitable qshift filter length: %d', varargin{narg+1})
+            end
+        otherwise
+            error('Unknown input argument: %s', varg)
+    end
+    narg = narg + 1;
 end
 
 if ~realA % Reorganize A into real valued array
-    A = complex2cube(A);
+    A = complex2cube(A, uAdj);
 end
 
-% Default filters
-params.Fsf = "nearsym5_7";
-params.sf = 10;
-params.sf = deblank(['qshift' num2str(params.sf)]);
+% Obtain the first-level analysis filter and q-shift filters
+load(L1F,'Lo*','Hi*');
+[~,~,~,~,LoRa,~,HiRa,~] = qorthwavf(Flen);
 
-% Get the level 1 filters
-load(char(params.Fsf),'Lo*','Hi*');
-% Get the q-shift filter
-load(char(params.sf),'Lo*','Hi*');
-
-if useAdj % Use adjoint in place of inverse
+if uAdj % Use adjoint in place of inverse
     % Biorthogonal reconstruction filters need to be replaced with
     % time-reversed decomposition filters. Since these filters are
     % symmetric, time reversal in not needed.
@@ -118,7 +171,7 @@ while level > 1             % Go through levels in decreasing order
         prev_level_size = syh(1:4).*2;
     end
     % Obtain scaling coefficients through synthesis
-    A = level2synthesis(A,D{level},g0a,g0b,g1a,g1b,prev_level_size);
+    A = level2synthesis(A,D{level},g0a,g0b,g1a,g1b,prev_level_size,uAdj);
     D{level} = [];   % Clear used detail coefficients to save memory.
     level = level-1;
 end
@@ -129,7 +182,7 @@ if level == 1 && isempty(D{1})
 end
 % Synthesis from 1st level detail coefficients
 if level == 1 && ~isempty(D{1})
-    rec = level1SynthHighpass(A,D{1},g0,g1);
+    rec = level1SynthHighpass(A,D{1},g0,g1,uAdj);
 end
 end
 
@@ -227,12 +280,11 @@ Y(Jb{:}) = convn(X(Ib{:}),hbOdd,'valid');
 end
 
 %-------------------------------------------------------------------------
-function Z = complex2cube(Z)
+function Z = complex2cube(Z,uAdj)
 % Reorganize the complex valued array into interlaced real valued array of
 % twice the size.
 
-global useAdj % Normalization differs for inverse and adjoint
-if ~useAdj
+if ~uAdj
     % Each orthant was divided by 2 in analysis, 8*1/2 = 4 hence 
     c = 0.25;
 else
@@ -293,7 +345,7 @@ Z(1:2:end,1:2:end,1:2:end,2:2:end) = -O1i+O2i+O3i-O4i+O5i-O6i-O7i+O8i; % Pbbba
 end
 
 %-------------------------------------------------------------------------
-function Y = level2synthesis(Yl,Yh,g0a,g0b,g1a,g1b,prev_level_size)
+function Y = level2synthesis(Yl,Yh,g0a,g0b,g1a,g1b,prev_level_size,uAdj)
 % From this we will only return the scaling coefficients at the next finer
 % resolution level
 LLLLsize = size(Yl);
@@ -315,21 +367,21 @@ Y1(:,s2a,s3a,s4a) = Yl;
 % There are 120 directions, 8 for each of the 15 filter setups
 ind = reshape(uint8(1:120), [8,15]).'; % Helpful index matrix
 
-Y2(:,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
-Y1(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
-Y2(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
-Y1(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
-Y2(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
-Y1(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
-Y2(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
-Y1(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
-Y2(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
-Y1(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
-Y2(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
-Y1(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
-Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
-Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
-Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
+Y2(:,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)),uAdj);    % HLLL
+Y1(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)),uAdj);    % LHLL
+Y2(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)),uAdj);    % HHLL
+Y1(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)),uAdj);    % LLHL
+Y2(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)),uAdj);    % HLHL
+Y1(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)),uAdj);    % LHHL
+Y2(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)),uAdj);    % HHHL
+Y1(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)),uAdj);    % LLLH
+Y2(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)),uAdj);    % HLLH
+Y1(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)),uAdj);   % LHLH
+Y2(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)),uAdj);   % HHLH
+Y1(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)),uAdj);   % LLHH
+Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)),uAdj);   % HLHH
+Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)),uAdj);   % LHHH
+Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)),uAdj);   % HHHH
 
 size_curr_level = size(Yh);
 size_curr_level = size_curr_level(1:4);
@@ -431,20 +483,16 @@ function Y = level1SynthNoHighpass(Y,g0,orgSize)
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
 
 % Filter dimension 1
-perm = []; % Same as [1 2 3 4]
-Y = oneDFilter(Y,g0,1);
+Z = oneDFilter(Y,g0,1);
 
 % Filter dimension 2
-perm = [2 1 3 4];
-Y = oneDFilter(Y,g0,2);
+Y = oneDFilter(Z,g0,2);
 
 % Filter dimension 3
-perm = [3 2 1 4];
-Y = oneDFilter(Y,g0,3);
+Z = oneDFilter(Y,g0,3);
 
 % Filter dimension 4
-perm = [4 2 3 1];
-Y = oneDFilter(Y,g0,4);
+Y = oneDFilter(Z,g0,4);
 
 % If the user specifies "excludeL1" at the input, it is possible that
 % the output data size may not be correct. To correct for that, the user
@@ -469,7 +517,7 @@ end
 end
 
 %-------------------------------------------------------------------------
-function Y = level1SynthHighpass(Yl,Yh,g0,g1)
+function Y = level1SynthHighpass(Yl,Yh,g0,g1,uAdj)
 % Finest level synthesis using all coefficients.
 
 LLLLsize = size(Yl);
@@ -489,21 +537,21 @@ Y1(:,s2a,s3a,s4a) = Yl;
 % There are 120 directions, 8 for each of the 15 filter setups
 ind = reshape(uint8(1:120), [8,15]).'; % Helpful index matrix
 
-Y2(:,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)));    % HLLL
-Y1(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)));    % LHLL
-Y2(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)));    % HHLL
-Y1(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)));    % LLHL
-Y2(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)));    % HLHL
-Y1(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)));    % LHHL
-Y2(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)));    % HHHL
-Y1(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)));    % LLLH
-Y2(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)));    % HLLH
-Y1(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)));   % LHLH
-Y2(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)));   % HHLH
-Y1(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)));   % LLHH
-Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)));   % HLHH
-Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)));   % LHHH
-Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)));   % HHHH
+Y2(:,s2a,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(1,:)),uAdj);    % HLLL
+Y1(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(2,:)),uAdj);    % LHLL
+Y2(:,s2b,s3a,s4a) = complex2cube(Yh(:,:,:,:,ind(3,:)),uAdj);    % HHLL
+Y1(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(4,:)),uAdj);    % LLHL
+Y2(:,s2a,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(5,:)),uAdj);    % HLHL
+Y1(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(6,:)),uAdj);    % LHHL
+Y2(:,s2b,s3b,s4a) = complex2cube(Yh(:,:,:,:,ind(7,:)),uAdj);    % HHHL
+Y1(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(8,:)),uAdj);    % LLLH
+Y2(:,s2a,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(9,:)),uAdj);    % HLLH
+Y1(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(10,:)),uAdj);   % LHLH
+Y2(:,s2b,s3a,s4b) = complex2cube(Yh(:,:,:,:,ind(11,:)),uAdj);   % HHLH
+Y1(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(12,:)),uAdj);   % LLHH
+Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)),uAdj);   % HLHH
+Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)),uAdj);   % LHHH
+Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)),uAdj);   % HHHH
 
 % Filter dimensions in reverse order compared to analysis: X->Y->Z->T
 % Notice that the size of Y# is halved at every step in the respective

@@ -3,11 +3,7 @@ function [A, D] = dualtree4(f, level, varargin)
 %   [A,D] = DUALTREE4(F) returns the 4-D dual-tree complex wavelet
 %   transform of F at the maximum level, floor(log2(min(size(F)))). F is a
 %   real-valued 4-D array (X-by-Y-by-Z-by-T) where all dimensions (X,Y,Z,T)
-%   must be even and greater than or equal to 4. For now, only the near
-%   symmetric biorthogonal wavelet filter with lengths 5 (scaling filter)
-%   and 7 (wavelet filter) is used for level 1 and the orthogonal Q-shift
-%   Hilbert wavelet filter pair of length 10 is used for levels greater
-%   than or equal to 2.
+%   must be even and greater than or equal to 4.
 %
 %   A is the matrix of complex or real-valued final-level scaling (lowpass)
 %   coefficients. By default complex values are used.
@@ -18,19 +14,43 @@ function [A, D] = dualtree4(f, level, varargin)
 %
 %   [A,D] = DUALTREE4(X,LEVEL) obtains the 4-D dual-tree transform down to
 %   LEVEL. LEVEL is a positive integer greater than or equal to 2 and less
-%   than or equal to floor(log2(min(size(F))).
+%   than or equal to floor(log2(min(size(F))). If LEVEL is given as an
+%   empty array, it defaults to the maximum level.
 %
-%   "ExcludeL1" excludes the first level detail coefficients and only the
-%   lowpass filter is used. If this option is used a perfect reconstruction
-%   is no longer possible but both the forward and inverse transform become
-%   computationally more efficient.
+%   Optional input arguments:
+%   Case insensitive, string or char, any order, LEVEL needs to be
+%   specified (or empty)!
+%
+%   {"ExcludeL1", "exclude"} OR {"IncludeL1", "include"}
+%       Excludes the first level detail coefficients and only the lowpass 
+%       filter is used. If this option is used a perfect reconstruction is
+%       no longer possible but both the forward and inverse transform 
+%       become computationally more efficient. Defaults to "IncludeL1".
+%
+%   {"complexA", "complex", "c"} OR {"realA", "real", "r"}
+%       Organization of the coarsest scale approximation coefficients. Real
+%       valued is the same as used in DUALTREE2 and DUALTREE3. Complex
+%       valued in the "correct" way and there are 8 sets of complex
+%       approximation coefficients (for each orthant) just like with detail
+%       coefficients. Defaults to "complexA".
+%
+%   {"LevelOneFilter", "L1F"}, {"nearsym5_7", "nearsym13_19", "antonini",
+%   OR "legall"}
+%       Key-value pair to determine which biorthogonal wavelets are used
+%       for the first decomposition level. Defaults to "nearsym5_7".
+%       Example: dualtree4(x,3,'l1f', 'antonini')
+%
+%   {"FilterLength", "FL", "Length", "Qshift"}, {6, 10, 14, 16 OR 18}
+%       Length of the Kingsbury Qshift filters used for decomposition level
+%       2 onwards. Length has to be a numerical value. Defaults to 10.
+%       Example: dualtree4(x, 3, 'fl', 16);
 %
 %   This code is heavily based on the DUALTREE3-function.
 %
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 12.5.2020
-%   Last edited 7.5.2021
+%   Last edited 24.6.2021
 
 % Ensure the input is numeric, real, and that it is four-dimensional
 validateattributes(f,{'numeric'},{'real','nonempty','finite','ndims',4},...
@@ -42,52 +62,75 @@ origsizedata = size(f);
 if any(rem(origsizedata,2)) || any(origsizedata < 4)
     error('Object dimensions are incompatible');
 end
-% Set up defaults for the first-level biorthogonal filter and subsequent
-% level orthogonal Hilbert filters
-% NOTE: CUSTOM FILTER LENGTHS NOT YET IMPLEMENTED!
-maxlev = floor(log2(min(size(f))));
-params.Faf = "nearsym5_7";
-params.af = 10;
-params.level = maxlev;
-params.af = deblank(['qshift' num2str(params.af)]);
-if nargin >= 2
-validateattributes(level,{'numeric'},...
-        {'integer','scalar','<=',maxlev,'>=',1},'DUALTREE4','LEVEL');
-    params.level = level;
-end
-
 % Use double precision if f is double, otherwise use single
-useDouble = isa(f,'double');
-
-% Check for 'ExcludeLeve1Details' or "ExcludeLevel1Details"
-validopts = ["ExcludeL1","IncludeL1"];
-defaultopt = "IncludeL1";
-[opt, varargin] = ...
-    wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
-
-% Check for 'realA' or "realA", i.e. whether the approximation
-% coefficients are returns as complex coefficients.
-validopts = ["realA","complexA"];
-defaultopt = "complexA";
-[Atype, ~] = ...
-    wavelet.internal.getmutexclopt(validopts,defaultopt,varargin);
-
+p.useDouble = isa(f,'double');
 % Case f to double or single
-if ~useDouble
+if ~p.useDouble
     f = single(f);
 end
 
+% Check the decomposition level
+p.maxlev = floor(log2(min(size(f))));
+if nargin >= 2 && ~isempty(level)
+validateattributes(level,{'numeric'},...
+        {'integer','scalar','<=',p.maxlev,'>=',1},'DUALTREE4','LEVEL');
+else
+    level = p.maxlev; % Default to maximum decomposition depth
+end
+
+% Initialize (with defaults)
+L1F = 'nearsym5_7'; % Level 1 filter type
+Flen = 10;          % Qshift filter length
+p.includeL1 = true; % Level 1 default coefficient handling
+p.complexA = true;  % Final approximation coefficient handling
+
+% Go through optional input arugments
+narg = 1;
+while narg <= length(varargin)
+    varg = lower(varargin{narg});
+    switch varg
+        %%% Single keyword parameters %%%
+        case {'complexa', 'complex', 'c', 'reala', 'real', 'r'}
+            % Check for 'realA' or "realA", i.e. whether the approximation
+            % coefficients are returns as real valued.
+            p.complexA = ~any(strcmpi(varg,{'realA','real','r'}));
+            
+        case {'includel1', 'include', 'excludel1', 'exclude'}
+            % Check for excluding level 1 detail coefficients
+            p.includeL1 = ~any(strcmpi(varg,{'excludel1', 'exclude'}));
+            
+        %%% Keyword-value pairs
+        case {'levelonefilter', 'l1f'}
+            % First level biorthogonal filter type
+            if any(strcmpi(varargin{narg+1}, {'nearsym5_7', 'nearsym13_19', 'antonini', 'legall'}))
+                L1F = varargin{narg+1};
+                narg = narg + 1; % Skip 'narg + 1'th input
+            else
+                error('Unsuitable first level filter: %s', varargin{narg+1});
+            end
+            
+        case {'filterlength', 'fl', 'length', 'qshift'}
+            if any(varargin{narg+1} == [6,10,14,16,18])
+                Flen = varargin{narg+1};
+                narg = narg + 1; % Skip 'narg + 1'th input
+            else
+                error('Unsuitable qshift filter length: %d', varargin{narg+1})
+            end
+        otherwise
+            error('Unknown input argument: %s', varg)
+    end
+    narg = narg + 1;
+end
+
 % Obtain the first-level analysis filter and q-shift filters
-load(char(params.Faf),'LoD','HiD');
-load(char(params.af),'LoD*','HiD*');
-if ~useDouble
+load(L1F,'LoD','HiD');
+[LoDa,~,HiDa,~,~,~,~,~] = qorthwavf(Flen);
+if ~p.useDouble
     LoD = single(LoD);
     HiD = single(HiD);
     LoDa = single(LoDa);
     HiDa = single(HiDa);
 end
-
-level = params.level;
 
 % First level filters
 h0 = LoD;
@@ -115,11 +158,11 @@ D = cell(level,1);
 
 % Level 1 filtering. We can omit the highest level
 % details if needed
-if strcmpi(opt,"ExcludeL1")
+if p.includeL1
+    [A,D{1}] = level1Highpass(f,h0,h1);
+else
     A = level1NoHighpass(f,h0);
     D{1} = [];
-else
-    [A,D{1}] = level1Highpass(f,h0,h1);
 end
 
 lev = 2;
@@ -128,7 +171,7 @@ while lev <= level
     [A,D{lev}] = level2Analysis(A,h0a,h1a,h0b,h1b);
     lev = lev+1;
 end
-if strcmpi(Atype,"complexA") % Check if A is returned complex valued
+if p.complexA % Check if A is returned complex valued
     A = cube2complex(A);
 end
 end
