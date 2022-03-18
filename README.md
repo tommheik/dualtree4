@@ -9,8 +9,9 @@ Dual-tree complex wavelets introduced by N.G. Kingsbury and later further develo
 Further extended to 3D by H. Chen and N.G. Kingsbury in 
 "Efficient registration of nonrigid 3-d bodies." *IEEE transactions on image processing 21.1 (2011): 262-272.* including 3D Matlab implementation. This 3D implementation is also the basis on which the 4D extension is built.
 
-Preprint of our (T.A. Bubba, T.H., S. Siltanen) extension to 4D and some applications to dynamic tomography in
-"4D Dual-Tree Complex Wavelets for Time-Dependent Data" *https://arxiv.org/abs/2103.15674*
+Conference proceeding of our (T.A. Bubba, T.H., S. Siltanen) extension to 4D and some applications to dynamic tomography in
+"4D Dual-Tree Complex Wavelets for Time-Dependent Data" *2021 21st International Conference on Computational Science and Its Applications (ICCSA), 2021, pp. 146-156, doi: 10.1109/ICCSA54496.2021.00029.*
+Pre-print available: (*https://arxiv.org/abs/2103.15674*)
 
 ### Requirements
 
