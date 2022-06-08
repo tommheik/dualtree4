@@ -50,7 +50,7 @@ function [A, D] = dualtree4(f, level, varargin)
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 12.5.2020
-%   Last edited 24.6.2021
+%   Last edited 8.6.2022
 
 % Ensure the input is numeric, real, and that it is four-dimensional
 validateattributes(f,{'numeric'},{'real','nonempty','finite','ndims',4},...
@@ -378,7 +378,9 @@ J = 1/2*[1 1j];
 %
 % Even number of imaginary or real parts corresponds to real.
 % Odd number of imaginary or real parts corresponds to imaginary.
-%            X       Y       Z       T
+% Note the Matlab convention where first dimension is actually height (y)
+% and second dimension is width (x).
+%            y       x       z       t
 Paaaa = X(2:2:end,2:2:end,2:2:end,2:2:end); % Re
 Paaab = X(2:2:end,2:2:end,2:2:end,1:2:end); % Im
 Paaba = X(2:2:end,2:2:end,1:2:end,2:2:end); % Im

@@ -23,7 +23,7 @@ function rec = idualtree4(A, D, varargin)
 %       2 onwards. Length has to be a numerical value. Defaults to 10.
 %       Example: dualtree4(x, 3, 'fl', 16);
 %
-%   REC = IDUALTREE4(A,D,orgSize), orgSize = [x, y, z, t] vector
+%   REC = IDUALTREE4(A,D,orgSize), orgSize = [y, x, z, t] vector
 %       computes the final synthesis so that the size of REC matches the
 %       size of the original object (orgSize). This is sometimes needed if
 %       the 1st level detail coefficients were excluded during analysis
@@ -40,7 +40,7 @@ function rec = idualtree4(A, D, varargin)
 %   Tommi Heikkilä
 %   University of Helsinki, Dept. of Mathematics and Statistics
 %   Created 15.5.2020
-%   Last edited 28.6.2021
+%   Last edited 8.6.2022
 
 % Check whether approximation coefficients are stored in real or complex 
 % valued format.
@@ -386,28 +386,26 @@ Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)),uAdj);   % HHHH
 size_curr_level = size(Yh);
 size_curr_level = size_curr_level(1:4);
 
-% Filter dimensions in reverse order compared to analysis: X->Y->Z->T
+% Filter dimensions in reverse order compared to analysis: y -> x -> z -> t
+% Note the Matlab convention where first dimension is actually height (y)
+% and second dimension is width (x).
 
 % Filter dimension 1
-perm = []; % Same as [1 2 3 4]
 Yl = invOddEvenFilter(Y1,g0a,g0b,1);  % Lowpass
 Yh = invOddEvenFilter(Y2,g1a,g1b,1);  % Highpass
 Y = Yl + Yh;
 
 % Filter dimension 2
-perm = [2 1 3 4];
 Yl = invOddEvenFilter(Y(:,s2a,:,:),g0a,g0b,2); % Lowpass
 Yh = invOddEvenFilter(Y(:,s2b,:,:),g1a,g1b,2); % Highpass
 Y = Yl + Yh;
 
 % Filter dimension 3
-perm = [3 2 1 4];
 Yl = invOddEvenFilter(Y(:,:,s3a,:),g0a,g0b,3); % Lowpass
 Yh = invOddEvenFilter(Y(:,:,s3b,:),g1a,g1b,3); % Highpass
 Y = Yl + Yh;
 
 % Filter dimension 4
-perm = [4 2 3 1];
 Yl = invOddEvenFilter(Y(:,:,:,s4a),g0a,g0b,4); % Lowpass
 Yh = invOddEvenFilter(Y(:,:,:,s4b),g1a,g1b,4); % Highpass
 Y = Yl + Yh;
@@ -480,7 +478,9 @@ end
 function Y = level1SynthNoHighpass(Y,g0,orgSize)
 % Finest level synthesis using only scaling coefficients.
 
-% Filter dimensions in reverse order compared to analysis: X->Y->Z->T
+% Filter dimensions in reverse order compared to analysis: x -> y -> z -> t
+% Note the Matlab convention where first dimension is actually height (y)
+% and second dimension is width (x).
 
 % Filter dimension 1
 Z = oneDFilter(Y,g0,1);
@@ -553,7 +553,10 @@ Y2(:,s2a,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(13,:)),uAdj);   % HLHH
 Y1(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(14,:)),uAdj);   % LHHH
 Y2(:,s2b,s3b,s4b) = complex2cube(Yh(:,:,:,:,ind(15,:)),uAdj);   % HHHH
 
-% Filter dimensions in reverse order compared to analysis: X->Y->Z->T
+% Filter dimensions in reverse order compared to analysis: x -> y -> z -> t
+% Note the Matlab convention where first dimension is actually height (y)
+% and second dimension is width (x).
+
 % Notice that the size of Y# is halved at every step in the respective
 % direction/dimension.
 
