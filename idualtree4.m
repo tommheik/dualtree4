@@ -84,7 +84,7 @@ end
 narg = 1;
 while narg <= length(varargin)
     varg = lower(varargin{narg});
-    if ~ischar(varg) || ~isstring(varg) || ~isscalar(varg)
+    if ~ischar(varg) && ~isstring(varg) && ~isscalar(varg)
         error('Unsuitable optional input argument for position %d', narg)
     end
     switch varg
